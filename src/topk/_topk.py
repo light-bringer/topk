@@ -32,6 +32,10 @@ class TopK(Generic[K]):
 
     Not thread-safe: guard concurrent use with a lock.
 
+    Instances can be pickled, and an unpickled instance continues exactly where it left off. Only
+    unpickle data you trust: ``pickle.loads`` can run arbitrary code before ``TopK`` gets to
+    check the state version, so that check guards against version mismatches, not malicious data.
+
     Args:
         k: How many keys to track (``>= 1``).
         width: Buckets per array. Larger is more accurate. Defaults to ``max(1024, 32 * k)``.

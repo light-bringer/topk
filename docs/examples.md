@@ -125,6 +125,10 @@ True
 Pickles are guaranteed readable only by the same release of the library; state written by an
 incompatible version raises `ValueError` rather than silently misbehaving.
 
+> **Only unpickle data you trust.** `pickle.loads` can run arbitrary code, and it does so before
+> `TopK` gets to check the version, so that check is a compatibility guard, not a security
+> boundary. Load checkpoints only from storage you control.
+
 ## Recipes
 
 ### Sizing the sketch

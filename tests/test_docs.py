@@ -38,3 +38,12 @@ def test_documentation_has_no_code_block_that_is_never_run(name: str) -> None:
     text = (ROOT / name).read_text(encoding="utf-8")
     assert "```python" not in text
 
+
+@pytest.mark.parametrize(
+    "name", ["README.md", "docs/examples.md", "examples/checkpointing.py", "src/topk/_topk.py"]
+)
+def test_pickle_documentation_warns_about_untrusted_data(name: str) -> None:
+    # Unpickling can run arbitrary code before TopK's version check; saved state must be trusted.
+    text = (ROOT / name).read_text(encoding="utf-8").lower()
+    assert "unpickle" in text
+    assert "trust" in text

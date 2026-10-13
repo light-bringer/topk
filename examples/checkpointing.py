@@ -5,6 +5,9 @@
 A pickled TopK keeps its sketch, its top-k set and its random-number state, so resuming gives
 exactly the result of one uninterrupted run. Pickles are guaranteed only between the same release
 of the library: loading state written by an incompatible version raises ``ValueError``.
+
+Only unpickle data you trust. ``pickle.loads`` can run arbitrary code before ``TopK`` gets to check
+the version, so that check is a compatibility guard, not a security boundary.
 """
 
 import pickle

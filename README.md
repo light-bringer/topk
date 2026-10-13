@@ -106,6 +106,10 @@ See [docs/examples.md](docs/examples.md) for a worked example.
 A restored instance continues exactly as an uninterrupted one would. State is guaranteed readable
 only by the same release of the library; incompatible state raises `ValueError`.
 
+> **Only unpickle data you trust.** `pickle.loads` can run arbitrary code, and it does so before
+> `TopK` gets to check the version, so that check guards against version mismatches, not against
+> malicious data. Load checkpoints only from storage you control.
+
 ## Choosing parameters
 
 | Parameter | Default | Guidance |
