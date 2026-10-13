@@ -7,7 +7,7 @@ The goal is a Python library implementing HeavyKeeper (Gong et al., USENIX ATC '
 Research on existing implementations found:
 - The only Python package is `heavykeeper` on PyPI, a PyO3 wrapper over `heavykeeper-rs`. It accepts string keys only, has no pickling, has low adoption, and implements the Redis-style *basic* algorithm. Neither it nor RedisBloom implements the paper's Opt I (fingerprint-collision admission check) or Opt II (selective increment).
 - There is no pure-Python implementation.
-- The opening for this library: pure Python, any key type, faithful to Algorithm 1 with Opt I and II, picklable, typed.
+- The opening for this library: pure Python, any hashable key (`str`, `bytes`, `int` and tuples of these out of the box, anything else through `key_encoder`), faithful to Algorithm 1 with Opt I and II, picklable, typed.
 
 Facts from the paper and the authors' code that the design depends on:
 1. **Typo in the paper's Algorithm 1, line 8.** It prints `C < n_min`. The authors' code (`papergitkeeper/heavy-keeper-project/heavykeeper.h`) uses `c <= getmin()`. With `<`, a new flow can never reach `n_min + 1`, so it can never enter a full heap. We use `<=`.
@@ -46,7 +46,7 @@ TopK(k, *, width=None, depth=2, decay_base=1.08, fingerprint_bits=32,
 - `decay_base` is the paper's `b` (must be > 1). This deliberately differs from the `decay = 1/b` used by Redis and the `heavykeeper` package, and the docs say so.
 - `width=None` defaults to `max(1024, 32*k)`. Phase 4 benchmarks will check this value.
 - `seed=None` draws a random seed (makes hash collisions hard to force on purpose). The seed is stored in the object's state; passing an integer makes runs reproducible.
-- Default `encode_key` handles `str`, `bytes`/`bytearray`, `int` (with `bool` encoded as `int`, because `True == 1`), `None`, and tuples of these (recursive, with type tags and length prefixes). Any other type raises `TypeError` that names `key_encoder=`. A custom encoder must be picklable for pickling to work.
+- Keys must be hashable: the top-k heap looks them up in a dict (`key in heap`). The default `encode_key` handles `str`, `bytes`, `int` (with `bool` encoded as `int`, because `True == 1`), `None`, and tuples of these (recursive, with type tags and length prefixes; the wire format is documented in `_encoding.py` and pinned by golden-vector tests). `bytearray` is not supported because it is unhashable. Any other type raises `TypeError` that names `key_encoder=`; a custom `key_encoder` extends which *hashable* types can be counted, it cannot make an unhashable key trackable. A custom encoder must be picklable for pickling to work.
 - Not thread-safe. The docs will say so.
 
 ### Internals
