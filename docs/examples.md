@@ -94,7 +94,7 @@ be hashable (a frozen dataclass is):
 
 ```pycon
 >>> def encode_endpoint(e: Endpoint) -> bytes:
-...     return f"{e.method} {e.path}".encode()
+...     return repr((e.method, e.path)).encode()  # unambiguous, unlike f"{e.method} {e.path}"
 >>> top = TopK[Endpoint](2, key_encoder=encode_endpoint, seed=1)
 >>> top.update([Endpoint("GET", "/")] * 5 + [Endpoint("POST", "/login")] * 2)
 >>> top.most_common()

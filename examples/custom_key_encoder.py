@@ -3,8 +3,9 @@
     python examples/custom_key_encoder.py
 
 The default encoder handles None, bool, int, str, bytes and tuples of these. For anything else
-supply a function from a key to ``bytes`` that maps equal keys to equal bytes. Keys must still be
-hashable, and the function must be defined at module level if the TopK is to be pickled.
+supply a function from a key to ``bytes`` that maps equal keys to equal bytes (and, ideally,
+different keys to different bytes). Keys must still be hashable, and the function must be defined
+at module level if the TopK is to be pickled.
 """
 
 import pickle
@@ -20,7 +21,8 @@ class Endpoint:
 
 
 def encode_endpoint(endpoint: Endpoint) -> bytes:
-    return f"{endpoint.method} {endpoint.path}".encode()
+    # Unambiguous: Endpoint("GET /a", "b") and Endpoint("GET", "/a b") must not share bytes.
+    return repr((endpoint.method, endpoint.path)).encode()
 
 
 TRAFFIC = (

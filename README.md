@@ -80,11 +80,20 @@ tuples of these (and subclasses such as `IntEnum` or `namedtuple` that do not re
 keys to equal bytes:
 
 ```pycon
->>> top = TopK(2, key_encoder=lambda price: repr(price).encode(), seed=1)
->>> top.update([9.99, 9.99, 4.5, 9.99, 4.5, 1.0])
+>>> import struct
+>>> def encode_price(price):
+...     return struct.pack(">d", price + 0.0)  # "+ 0.0" turns -0.0 into 0.0, as -0.0 == 0.0
+>>> top = TopK(2, key_encoder=encode_price, seed=1)
+>>> top.update([9.99, 9.99, 4.5, 9.99, 4.5, 0.0, -0.0])
 >>> top.most_common()
 [(9.99, 3), (4.5, 2)]
+>>> top.estimate(0.0), top.estimate(-0.0)  # equal keys share one count
+(2, 2)
 ```
+
+Mind what `==` means for your keys: `-0.0 == 0.0` and `1 == 1.0`, so an encoder that used `repr()`
+would split one key's count in two. Ideally different keys also encode differently; if two do
+share bytes they share sketch buckets, which costs accuracy but never correctness of the set.
 
 Keys are encoded to bytes (not passed to `hash()`) because the built-in hash of `str` and `bytes`
 changes between processes, which would make a pickled sketch useless. If the instance is to be
