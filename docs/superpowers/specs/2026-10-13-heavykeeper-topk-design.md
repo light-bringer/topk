@@ -1,158 +1,218 @@
-# Plan: pure-Python HeavyKeeper top-k library for PyPI
+# Design notes: a pure-Python HeavyKeeper library
 
-## Context
+These notes describe how the library is built and why. They are written for people who want to
+change the code. To *use* the library, read the [README](../../../README.md); to understand the
+algorithm, read [How HeavyKeeper works](../../algorithm.md).
 
-The goal is a Python library implementing HeavyKeeper (Gong et al., USENIX ATC '18) for finding the top-k most frequent items in a stream, published on PyPI. The chosen strategy is **"pure-Python now, fast later"**: ship a zero-dependency reference implementation first, with an internal seam so a compiled backend can be added later without breaking users.
+## Summary
 
-Research on existing implementations found:
-- The only Python package is `heavykeeper` on PyPI, a PyO3 wrapper over `heavykeeper-rs`. It accepts string keys only, has no pickling, has low adoption, and implements the Redis-style *basic* algorithm. Neither it nor RedisBloom implements the paper's Opt I (fingerprint-collision admission check) or Opt II (selective increment).
-- There is no pure-Python implementation.
-- The opening for this library: pure Python, any hashable key (`str`, `bytes`, `int` and tuples of these out of the box, anything else through `key_encoder`), faithful to Algorithm 1 with Opt I and II, picklable, typed.
+`heavykeeper-topk` finds the `k` most frequent items of a stream in fixed memory. It implements
+HeavyKeeper (Gong et al., USENIX ATC 2018) in pure Python, including the paper's two accuracy
+refinements (Optimizations I and II). The package is imported as `topk`.
 
-Facts from the paper and the authors' code that the design depends on:
-1. **Typo in the paper's Algorithm 1, line 8.** It prints `C < n_min`. The authors' code (`papergitkeeper/heavy-keeper-project/heavykeeper.h`) uses `c <= getmin()`. With `<`, a new flow can never reach `n_min + 1`, so it can never enter a full heap. We use `<=`.
-2. **`n_min` is 0 while the heap is not full.** This matches `ssummary::getmin()` in the reference code.
-3. **Hashing must be stable across processes.** Python's built-in `hash()` is randomized per process for `str` and `bytes`, which would corrupt pickled state. We use keyed BLAKE2b from the standard library instead.
-4. **The PyPI name `topk` cannot be registered.** PyPI normalizes names by removing `.`, `_` and `-` and mapping `l`/`i`→`1` and `o`→`0`. That turns `topk` into `t0pk`, the same as the existing project `top-k`. **Recommended distribution name: `heavykeeper-topk`** (currently unregistered). The **import name `topk` is free**: `top-k` installs `top_k` and `topk-sdk` installs `topk_sdk`. The distribution name only appears in `pyproject.toml` and the README, so it is cheap to change.
+The strategy is **pure Python now, a compiled backend later**: ship a dependency-free reference
+implementation first, and keep the interface between the pieces narrow enough that a compiled
+kernel can replace the slow part without changing the public API.
 
-## Design
+## Status
 
-### Package layout (src layout, in this repo)
-```
-pyproject.toml            # PEP 621 metadata, hatchling backend, requires-python >=3.10, MIT
-README.md  LICENSE  CHANGELOG.md
-src/topk/
-  __init__.py             # exports TopK; __version__ via importlib.metadata
-  _encoding.py            # encode_key(key) -> bytes: stable and consistent with ==
-  _heap.py                # IndexedMinHeap: key -> slot dict + parallel lists
-  _sketch.py              # PySketch kernel: hashing, d*w buckets, decay table, insert and estimate
-  _topk.py                # TopK public class (Algorithm 1 orchestration)
-  py.typed
-tests/  benchmarks/  examples/  docs/examples.md  .github/workflows/{ci.yml,release.yml}
-```
+| Area | State |
+|---|---|
+| Library (`TopK`, key encoding, sketch, heap) | Done and merged |
+| Tests: unit, property-based, accuracy gates, microbenchmarks | Done and merged |
+| Benchmarks and measurements | Done and merged |
+| README, algorithm guide, examples guide, runnable examples | Done |
+| CI on CPython 3.10 to 3.14 (Linux, macOS, Windows) and PyPy 3.11 | Done |
+| Release workflow and first publication to PyPI | **Not done** (see [Releasing](#releasing)) |
+| Compiled backend, other uses from the paper | Later (see [Roadmap](#roadmap)) |
 
-### Public API (v0.1, the only contract; everything prefixed `_` is private)
-```python
-TopK(k, *, width=None, depth=2, decay_base=1.08, fingerprint_bits=32,
-     seed=None, key_encoder=None)
-  .add(key, count=1)            # count>1 = repeated unit inserts (hash once); O(count*d)
-  .update(iterable_or_mapping)  # like Counter.update
-  .estimate(key) -> int         # sketch query: max counter among buckets whose fingerprint matches
-  key in tk                     # is the key currently in the top-k?
-  .most_common(n=None) -> list[tuple[K, int]]   # descending by count
-  len(tk), iter(tk), repr(tk); read-only properties k, width, depth, decay_base, seed, total
-  pickle support via __getstate__/__setstate__ (seed and RNG state included)
-```
-- `decay_base` is the paper's `b` (must be > 1). This deliberately differs from the `decay = 1/b` used by Redis and the `heavykeeper` package, and the docs say so.
-- `width=None` defaults to `max(1024, 32*k)`. Measured in Phase 4 on a 500k-item Zipf stream (s = 1.1, k = 100): precision 1.000 and ARE <= 0.0008 on every seed, so the default stands.
-- `seed=None` draws a random seed (makes hash collisions hard to force on purpose). The seed is stored in the object's state; passing an integer makes runs reproducible.
-- Keys must be hashable: the top-k heap looks them up in a dict (`key in heap`). The default `encode_key` handles `str`, `bytes`, `int` (with `bool` encoded as `int`, because `True == 1`), `None`, and tuples of these (recursive, with type tags and length prefixes; the wire format is documented in `_encoding.py` and pinned by golden-vector tests). `bytearray` is not supported because it is unhashable. Subclasses of these types (`bool`, `IntEnum`, `namedtuple`, ...) are accepted only while they inherit `__eq__` and `__hash__` from the builtin unchanged; one that redefines equality could make distinct heap keys share an encoding, so it raises `TypeError` and needs a `key_encoder`. Any other type raises `TypeError` that names `key_encoder=`; a custom `key_encoder` extends which *hashable* types can be counted, it cannot make an unhashable key trackable. A custom encoder must be picklable for pickling to work.
-- Not thread-safe. The docs will say so.
+## Why a new library
 
-### Internals
-**Hashing (in `_sketch.py`):**
-- `x = int.from_bytes(blake2b(data, digest_size=16, key=seed_bytes).digest(), "little")`
-- `h1 = x & (2**64-1)`, `h2 = ((x >> 64) & (2**32-1)) | 1`, `fp = (x >> 96) & fp_mask`
-- Row index: `idx_j = (h1 + j*h2) % width`, and the flat bucket index is `j*width + idx_j`
-- Seed: `0 <= seed < 2**64`, used as the 8-byte big-endian BLAKE2b key and to seed the decay RNG. A pre-keyed hasher is copied per call to skip re-absorbing the key block.
+A survey of existing implementations, done before building, found:
 
-**Buckets:** two flat `array.array` objects, `fps` (`'I'`, 32-bit) and `counts` (`'Q'`, 64-bit), each of length `depth*width`; row `j` starts at offset `j*width`. Measured against lists: the same insertion speed (312k vs 313k inserts/s on CPython 3.13) and 3.7x less memory, because a list holds every 32-bit fingerprint as a separate ~28-byte int object.
+- The only Python package, [`heavykeeper`](https://pypi.org/project/heavykeeper/) on PyPI, is a thin
+  wrapper over a Rust crate. It takes `str` keys only, does not expose pickling, has few users, and
+  implements the basic algorithm: neither refinement from the paper.
+- [Redis `TOPK`](https://redis.io/docs/stack/bloom/TopK_Commands) also implements the basic
+  algorithm, and needs a Redis server.
+- There are implementations in Go, Rust, Java, Ruby and C++, and none in pure Python.
 
-**Decay table:** `table[c] = b**-c`, computed until it drops below 2⁻⁵³ (about c ≈ 477 for b = 1.08). Beyond that the decay probability is treated as 0. Randomness comes from `random.Random(seed)`.
+That leaves room for a library that is pure Python, accepts any hashable key, includes both
+refinements, can be pickled and is fully typed. The refinements matter: with short fingerprints
+they separate a usable result from a useless one (see the README's benchmarks).
 
-**Kernel interface:** hashing is split from insertion so `add(key, count)` hashes once: `locate(data) -> (slots, fp)`, `insert(slots, fp, monitored, n_min) -> maxv` (one unit insertion) and `estimate(slots, fp) -> int`. The decay RNG is injectable so tests can script which bucket decays. A bucket whose counter is at or above the cutoff (`b**-c < 2**-53`) is never decayed and consumes no random draw.
+## Goals and non-goals
 
-**Kernel insert**, for each of the flow's buckets:
-```
-c = counts[i]
-if c == 0:            fps[i] = fp; counts[i] = 1; maxv = max(maxv, 1)                 # Case 1
-elif fps[i] == fp:    if monitored or c <= n_min: c += 1; counts[i] = c                # Case 2 + Opt II
-                      maxv = max(maxv, c)
-elif c < len(table) and rand() < table[c]:                                              # Case 3
-                      c -= 1
-                      if c == 0: fps[i] = fp; c = 1; maxv = max(maxv, 1)
-                      counts[i] = c
+**Goals:** bounded memory; accuracy at least as good as the paper reports; any hashable key; a small
+public API; no runtime dependencies; correctness that tests can pin down.
+
+**Non-goals for 0.1:** speed (pure Python is about 20 times slower than a Rust implementation, and
+that is accepted); sliding windows; merging sketches; thread safety.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U(["your code"]) --> T["TopK<br/>_topk.py<br/>Algorithm 1 and the public API"]
+    T --> E["encode_key<br/>_encoding.py<br/>key to stable bytes"]
+    T --> S["PySketch<br/>_sketch.py<br/>buckets, hashing, decay"]
+    T --> H["IndexedMinHeap<br/>_heap.py<br/>the top-k set"]
+    S -. "same locate, insert, estimate<br/>interface" .-> N["compiled kernel<br/>(planned)"]
 ```
 
-**Top-k step:** `TopK._add_one(key, data)` implements Algorithm 1 with Opt I:
-```
-monitored = key in heap
-n_min = heap.min_count() if len(heap) == k else 0
-slots, fp = kernel.locate(data)            # once per add(), however large count is
-maxv = kernel.insert(slots, fp, monitored, n_min)
-if monitored:            heap.increase(key, maxv)            # no-op unless maxv > current
-elif maxv > 0:
-    if len(heap) < k:    heap.push(key, maxv)
-    elif maxv == n_min + 1: heap.replace_min(key, maxv)      # Opt I (Theorem 1)
-```
-Two private class attributes, `_selective_increment` (Opt II) and `_exact_admission` (Opt I), default to `True`. The benchmarks subclass `TopK` and clear them to build a "basic" variant for comparison, and the tests use the same switches to show what each optimization changes (they differ from the basic algorithm only when a fingerprint collision hands a key another flow's bucket).
+| Module | Responsibility |
+|---|---|
+| `topk._topk.TopK` | The public class. Runs Algorithm 1: encode the key, ask the sketch, update the top-k set. Validates arguments and handles pickling. |
+| `topk._encoding` | `encode_key(key) -> bytes`: a stable, collision-free byte encoding of keys. |
+| `topk._sketch.PySketch` | The bucket arrays. Hashing (`locate`), the insert rule (`insert`) and the query (`estimate`). Knows nothing about the top-k set. |
+| `topk._heap.IndexedMinHeap` | A min-heap with a dictionary from key to position: the top-k set. |
 
-**IndexedMinHeap:** `push`, `min_count` (O(1)), `increase` (sift down, since counts only grow), `replace_min` (returns the evicted entry), `get`, `__contains__`, `items_desc()`.
+Everything with a leading underscore is private. The only public name is `topk.TopK`.
 
-**Seam for a later compiled backend:** a future native kernel exposes the same private `locate` / `insert` / `estimate` interface and is chosen at import time, falling back to the pure-Python kernel. Pickled state records a kernel/hash-scheme identifier, so mixing backends fails loudly. The plan is to ship the native code as a separate distribution behind an extra (`heavykeeper-topk[fast]`), so the main wheel stays `py3-none-any`.
+Other directories: `tests/` (the test suite), `benchmarks/` (accuracy and speed scripts),
+`examples/` (runnable scripts), `docs/` (the guides) and `.github/workflows/ci.yml` (CI).
 
-### Deliberate differences from the paper (all listed in the README)
-1. Opt II uses `<=` (fact 1 above).
-2. `n_min = 0` until the heap is full (fact 2 above).
-3. Empty buckets are handled explicitly as Case 1. Taken literally, the paper's pseudocode would decrement an empty bucket to −1.
-4. Items whose estimate is 0 are never admitted to the heap.
-5. The decay probability is exactly `b^-C`. The reference code uses `1/floor(b^C)`.
-6. Fingerprints default to 32 bits (the paper used 16), configurable from 1 to 32.
-7. Hashing is keyed BLAKE2b with double hashing. The reference code uses BOBHash with a different modulus per row.
+### The kernel interface
 
-## Build phases (test-driven: failing test first in every phase)
+The sketch has exactly three operations, so a compiled kernel can replace it:
 
-**Phase 0: Scaffolding**
-- Use a stdlib venv with pip 25.1+ (`python -m venv .venv && pip install -e . --group dev`). `uv` is not required.
-- Write `pyproject.toml` (hatchling, MIT, Python 3.10+, classifiers, dev group: pytest, hypothesis, pytest-cov, ruff, mypy).
-- Add `src/topk/__init__.py` (stub), `py.typed`, `.gitignore`, LICENSE, and a minimal README.
-- Add `ci.yml`: ruff, `mypy --strict`, and pytest across Python 3.10–3.14 and PyPy 3.11 on ubuntu, macOS and Windows.
-- Save this plan into the repo as `docs/superpowers/specs/2026-10-13-heavykeeper-topk-design.md` and commit it.
+- `locate(data) -> (slots, fingerprint)` hashes an encoded key once.
+- `insert(slots, fingerprint, monitored, n_min) -> maxv` counts one occurrence and returns the key's
+  estimate.
+- `estimate(slots, fingerprint) -> int` asks for the current estimate.
 
-**Phase 1: Primitives**
-- `_encoding.py`:
-  - Encoding matches `==`: `1`, `True` and `1` inside a tuple encode alike where Python treats them as equal.
-  - Unequal keys give unequal bytes, tested with Hypothesis.
-  - Unsupported types raise `TypeError`.
-- `_heap.py`: property test against a sorted reference implementation; check the invariant after every operation.
+Hashing is split from inserting so that `add(key, count)` hashes once and then inserts `count`
+times. A future native kernel would implement the same three operations and be chosen at import
+time, falling back to the Python kernel. Pickled state records a hashing-scheme identifier, so
+loading a sketch written by an incompatible kernel fails with an error instead of giving wrong
+answers. The native code would ship as a separate distribution behind an extra, so the main wheel
+stays pure Python.
 
-**Phase 2: Sketch kernel (`_sketch.py`)**
-- Unit tests for Cases 1–3 using an injected deterministic RNG, mirroring the paper's Figure 1 example.
-- Decay table values and cutoff.
-- Opt II gating (`monitored` / `c <= n_min`).
-- **Theorem 2 property test** (Hypothesis, 32-bit fingerprints, small streams): `estimate(key) <= true_count(key)` for every key, always.
+## Key decisions
 
-**Phase 3: `TopK` public class (`_topk.py`)**
-- Algorithm 1 and Opt I through `_admit`.
-- `add` with a count, `update`, `estimate`, `__contains__`, `most_common`, properties, `repr`.
-- Argument validation: `k >= 1`, `width >= 1`, `depth >= 1`, `decay_base > 1`, `1 <= fingerprint_bits <= 32`.
-- Pickling: a round trip in the middle of a stream must give identical results to an uninterrupted run with the same seed.
-- **Regression test: a new heavy key must be able to enter a full heap.** This catches the `<` vs `<=` typo.
+**Keys are encoded to bytes and hashed with keyed BLAKE2b, never with `hash()`.** Python randomizes
+the hash of `str` and `bytes` per process, so a pickled sketch loaded in another process would map
+keys to different counters and silently return nonsense. The encoding is prefix-free (so different
+keys give different bytes) and consistent with `==` (so `True` and `1` encode alike). Its format and
+the hash scheme are pinned by tests, because saved state depends on them.
 
-**Phase 4: Accuracy and throughput harness (`benchmarks/`)**
-- `common.py`: the seeded Zipf generator, the paper's metrics (precision is tie-aware: a reported key is correct if its true count is at least the k-th largest) and `BasicTopK`.
-- `accuracy.py` (`python -m benchmarks.accuracy`): reports precision, ARE and AAE (paper §5.2) against an exact `Counter` for the full and basic variants, and for the PyPI `heavykeeper` package with `--with-heavykeeper`.
-- `throughput.py` (`python -m benchmarks.throughput`): median inserts per second.
-- `tests/test_accuracy.py` (marked `slow`, run with `pytest -m slow`): Zipf with s = 1.1, N = 500k, k = 100. Default configuration: precision >= 0.98, ARE < 0.005, and no reported count above its true count. The "beats the basic variant" gate runs with **8-bit fingerprints**, because with the default 32-bit fingerprints the two variants are identical (Optimizations I and II only act on fingerprint collisions): there the full algorithm keeps precision >= 0.95 and ARE < 0.05 while the basic variant falls to precision <= 0.9 and an ARE more than 1000x larger (measured 74,000x to 170,000x).
-- Measured throughput (about 0.3M inserts/s on CPython 3.13, against about 6M for the Rust-backed `heavykeeper` package) and the accuracy table are recorded in the README as part of Phase 5, not in this phase. There is no hard speed requirement for pure Python.
+**A key subclass is accepted only if it inherits `__eq__` and `__hash__` unchanged,** and the
+encoding is computed with the builtins' own methods. Otherwise a subclass that redefines equality
+could make two different dictionary keys share an encoding. Such keys need an explicit
+`key_encoder`.
 
-**Phase 5: Docs and release**
-- README: install, quickstart, how to pick parameters (memory vs. precision, using the Theorem 3 bound), the list of differences from the paper, a BibTeX citation of the paper, and a comparison with the `heavykeeper` and Redis implementations.
-- Docstrings on every public method; CHANGELOG.
-- Built beyond the original plan: `examples/` (four runnable scripts, typed and tested), `docs/examples.md` (a guide with recipes), a `tests/test_docs.py` that runs the `pycon` examples of the README and the guide, and `pytest-benchmark` microbenchmarks behind a `bench` marker with a CI job that keeps the results as an artifact. Documentation examples are doctests so they cannot rot.
-- `release.yml`: on a `v*` tag, run `python -m build`, `twine check`, then publish with `pypa/gh-action-pypi-publish` via PyPI Trusted Publishing.
-- **Steps only you can do:** create the PyPI and TestPyPI accounts, and add a "pending trusted publisher" for `heavykeeper-topk` → `light-bringer/topk` / `release.yml`.
-- Publish 0.1.0 to TestPyPI first, check `pip install` in a clean virtual environment, then publish to PyPI.
+**Optimization II compares `c <= n_min`, not `c < n_min`.** The paper's pseudocode prints the strict
+form, which would stop a new frequent key from ever reaching `n_min + 1` and entering a full set.
+The authors' own code uses `<=`. A regression test reproduces the problem through the public API.
 
-**Later (each with its own spec, not part of v0.1):**
-- The native kernel (`[fast]` extra, probably Rust/PyO3 with maturin and cibuildwheel).
-- The paper's other uses (§3.6): a heavy-hitter query (`estimate > θN`) and heavy-change detection.
-- Opt III's threshold-array mode, a sliding-window variant, and merging sketches.
+**`n_min` is 0 until the top-k set is full,** as in the authors' code. A key whose estimate is 0 is
+never admitted.
 
-## Verification
-- `pytest` passes (unit and property tests); `pytest -m slow` passes the accuracy gates.
-- `ruff check . && ruff format --check . && mypy` are clean (mypy runs in strict mode via `pyproject.toml`).
-- `python -m benchmarks.accuracy --fingerprint-bits 8 32` prints a precision/ARE/AAE table in which the full algorithm beats the basic variant at 8 bits and matches it at 32.
-- `python -m build` produces a `py3-none-any` wheel and an sdist; `twine check dist/*` passes.
-- Smoke test: install the wheel into a fresh venv on CPython and PyPy, then `python -c "from topk import TopK; t=TopK(3, seed=1); t.update('aaabbc'); print(t.most_common())"`.
-- After the TestPyPI upload, `pip install -i https://test.pypi.org/simple/ heavykeeper-topk` works in a clean venv.
+**Buckets live in `array.array`, not lists.** Measured on a 500,000-item stream: the same insert
+speed (312k against 313k per second) and 3.7 times less memory, because a list stores every 32-bit
+fingerprint as a separate 28-byte object. A bucket costs 12 bytes (4 for the fingerprint, 8 for the
+counter).
+
+**The default fingerprint is 32 bits** (the paper used 16). Two keys then essentially never collide.
+The optimizations are identical to the basic algorithm at 32 bits and decisive at 8 bits, so the
+accuracy tests that distinguish them run with 8-bit fingerprints.
+
+**The default `width` is `max(1024, 32 * k)`.** Measured on a 500,000-item Zipf stream with `k =
+100`: precision 1.000 and average relative error below 0.0008 on every seed, so no tuning was
+needed.
+
+**The decay probability is exactly `b ** -C`,** read from a table up to 4,096 entries and computed
+beyond that. From the count where `b ** -C` falls below 2^-53 a counter is never decayed and no
+random number is drawn. The cutoff is computed against the actual powers, because the logarithm
+formula is off by one for some bases (a bug found in review).
+
+**The random generator is injectable.** Tests script exactly which bucket decays, which is how the
+paper's Figure 1 example is reproduced.
+
+**Integer arguments go through `operator.index`.** Otherwise `TopK(float("nan"))` would build a set
+that is never full, quietly breaking the memory bound.
+
+**The basic algorithm is two class attributes away.** `_selective_increment` and `_exact_admission`
+(both `True`) switch Optimizations II and I off. The benchmarks and the tests use them to show what
+each optimization changes. They are private.
+
+**State is versioned, and the docs warn about trust.** A `TopK` pickles with a version number, and
+an incompatible version raises `ValueError`. Because `pickle.loads` can run code before that
+check, the documentation says to load checkpoints only from trusted storage.
+
+**Names.** The distribution is `heavykeeper-topk` and the import is `topk`. The shorter distribution
+name `topk` cannot be registered: PyPI treats names that differ only by `.`, `_`, `-`, `l`/`i` and
+`o`/`0` as the same, and `topk` collides with the existing `top-k`. The import name is free.
+
+## How it is tested
+
+- **Unit and property-based tests** (Hypothesis): key encoding is injective and agrees with `==`
+  (including surrogate characters); the heap is checked against a plain dictionary after every
+  operation by a state machine; the sketch never overestimates (the paper's Theorem 2), over random
+  streams, widths and optimization inputs.
+- **Golden values** pin the key-encoding format and the hash scheme, so a change that would break
+  saved state fails a test.
+- **Scenario tests with a scripted random generator** reproduce each insert case and the paper's
+  Figure 1; further tests stage a fingerprint collision to show what each optimization changes.
+- **Accuracy gates** (`pytest -m slow`, about 15 seconds): precision, relative error and the
+  difference between the full and basic algorithms on a 500,000-item Zipf stream.
+- **Microbenchmarks** (`pytest -m bench`): 14 `pytest-benchmark` tests, each also checking that what
+  it timed behaved correctly. CI keeps the results as an artifact but does not fail on speed, since
+  shared runners are too noisy for a threshold.
+- **Documentation tests:** every `>>>` example in the README, the algorithm guide and the examples
+  guide is run, the example scripts are run, and the Mermaid diagrams are checked for structure.
+- During development, the important behaviors were also checked by breaking the code on purpose
+  (for example reintroducing the paper's strict comparison) and confirming a test fails. That was
+  done by hand; it is not automated.
+
+CI runs lint (`ruff`), strict type checking (`mypy`), the test suite on CPython 3.10 to 3.14 on
+Linux, macOS and Windows and on PyPy 3.11, the accuracy gates, the microbenchmarks, and a build with
+`twine check`.
+
+## Measurements
+
+On one machine, CPython 3.13, a 500,000-item Zipf stream with skew 1.1 and `k = 100`:
+
+- Defaults: precision 1.000, average relative error 0.0005 to 0.0008.
+- Memory: 12 bytes per bucket (24.6 KB at the defaults) plus about 84 bytes per tracked key.
+- Speed: about 0.3 million inserts per second. The Rust-backed `heavykeeper` package does about 6
+  million at similar accuracy.
+
+The README has the full table, including the 8-bit fingerprint runs.
+
+## Releasing
+
+Not done yet. What is needed:
+
+1. A release workflow that, on a `v*` tag, builds the sdist and wheel, runs `twine check`, and
+   publishes through PyPI Trusted Publishing (no stored tokens).
+2. **Steps only the maintainer can do:** create the PyPI and TestPyPI accounts, and register a
+   pending trusted publisher for `heavykeeper-topk` pointing at this repository and the release
+   workflow.
+3. Publish 0.1.0 to TestPyPI first, install it into a clean virtual environment, and then publish
+   to PyPI. Change the version from `0.1.0.dev0` and date the changelog entry at that point.
+
+## Roadmap
+
+Each of these would get its own design before work starts:
+
+- A compiled kernel (probably Rust with PyO3 and maturin), behind a `[fast]` extra.
+- The paper's other uses (section 3.6): a heavy-hitter query (everything above a fraction of the
+  stream) and heavy-change detection between two time bins.
+- The paper's Optimization III, which replaces the heap with a threshold array.
+- Sliding windows and merging two sketches.
+
+## How it was built
+
+The work went in small steps, each driven by a failing test first, and each reviewed as a pull
+request.
+
+| Step | What it added |
+|---|---|
+| 1 | Project scaffolding: packaging, lint, type checking, CI |
+| 2 | Key encoding and the indexed min-heap |
+| 3 | The sketch kernel: hashing, decay, the insert rule |
+| 4 | The `TopK` class: Algorithm 1 with both refinements, validation, pickling |
+| 5 | Compact bucket storage, the benchmark scripts and the accuracy gates |
+| 6 | README, the examples guide, runnable examples, microbenchmarks |
+| 7 | The algorithm guide with diagrams, and a readability pass over all documentation |

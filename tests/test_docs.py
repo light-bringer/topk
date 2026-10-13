@@ -80,6 +80,7 @@ def test_mermaid_guard_flags_broken_diagrams() -> None:
     [
         ("README.md", 1),
         ("docs/algorithm.md", 9),
+        ("docs/superpowers/specs/2026-10-13-heavykeeper-topk-design.md", 1),
     ],
 )
 def test_mermaid_diagrams_are_well_formed(name: str, at_least: int) -> None:
