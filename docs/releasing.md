@@ -65,8 +65,10 @@ first (for example from `0.1.0.dev0` to `0.1.0.dev1`).
    ```
 
 5. **Watch the Release workflow.** It first checks that the tag is `v` plus exactly the version in
-   `pyproject.toml` (so a tag cannot publish a different version, or a `.dev0` snapshot, by
-   mistake), then builds, smoke-tests the wheel on every platform, and publishes to PyPI.
+   `pyproject.toml`, and that the version is not a development version such as `0.1.0.dev0` (so a
+   tag cannot publish a different version, or a snapshot, by mistake). Then it builds the package,
+   installs the built wheel on the oldest and newest supported Python to check that it works, and
+   publishes to PyPI.
 6. **Verify:** in a clean environment run `pip install heavykeeper-topk` and try it. Create a GitHub
    release from the tag, using the changelog text.
 7. **Start the next version:** set `version` to the next development version (for example

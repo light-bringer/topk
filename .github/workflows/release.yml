@@ -47,18 +47,16 @@ jobs:
           path: dist/
 
   smoke-test:
-    name: smoke test (${{ matrix.python }}, ${{ matrix.os }})
+    name: smoke test (${{ matrix.python }})
     needs: build
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: true
       matrix:
-        include:
-          - {os: ubuntu-latest, python: "3.10"}
-          - {os: ubuntu-latest, python: "3.13"}
-          - {os: ubuntu-latest, python: "pypy3.11"}
-          - {os: macos-latest, python: "3.13"}
-          - {os: windows-latest, python: "3.13"}
+        # The wheel is pure Python, so it is the same file on every platform. What can differ is
+        # whether it installs and imports on the oldest and newest Python we support. The full test
+        # suite already runs on every platform and on PyPy (ci.yml), so this does not repeat that.
+        python: ["3.10", "3.13"]
     steps:
       - uses: actions/setup-python@v5
         with:

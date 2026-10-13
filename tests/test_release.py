@@ -134,6 +134,13 @@ def test_publishing_waits_for_the_build_and_the_smoke_test(workflow: str) -> Non
         assert "needs: [build, smoke-test]" in job(workflow, name)
 
 
+def test_the_wheel_is_smoke_tested_on_the_oldest_supported_python(workflow: str) -> None:
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    oldest = re.search(r">=\s*(3\.\d+)", config["project"]["requires-python"])
+    assert oldest, "requires-python no longer has a >=3.x lower bound"
+    assert f'"{oldest.group(1)}"' in job(workflow, "smoke-test")
+
+
 def test_real_pypi_is_only_reachable_from_a_version_tag(workflow: str) -> None:
     assert "startsWith(github.ref, 'refs/tags/v')" in job(workflow, "publish-pypi")
     assert "environment:\n      name: pypi" in job(workflow, "publish-pypi")

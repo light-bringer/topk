@@ -187,10 +187,12 @@ The README has the full table, including the 8-bit fingerprint runs.
 ## Releasing
 
 The release workflow (`.github/workflows/release.yml`) exists. On a `v*` tag it checks that the tag
-matches the version in `pyproject.toml`, builds the sdist and wheel, runs `twine check`, installs the
-built wheel on Linux, macOS, Windows and PyPy and runs a small program with it, and then publishes
-through PyPI Trusted Publishing, so no token is stored. Run by hand it does a dry run to TestPyPI.
-The tag check is a small tested script, and tests pin the workflow's security-relevant structure.
+matches the version in `pyproject.toml` (and is not a development version), builds the sdist and
+wheel, runs `twine check`, installs the built wheel on the oldest and newest supported Python and
+runs a small program with it, and then publishes through PyPI Trusted Publishing, so no token is
+stored. Run by hand it does a dry run to TestPyPI. The tag check is a small tested script, and tests
+pin the workflow's security-relevant structure. The smoke test is deliberately small: the wheel is
+pure Python, and the full test suite already runs on every platform in `ci.yml`.
 
 The workflow has not published anything yet. What is left:
 
