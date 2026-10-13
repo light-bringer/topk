@@ -58,6 +58,7 @@ include = ["src/topk", "tests", "benchmarks", "README.md", "LICENSE", "CHANGELOG
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config -m 'not slow'"
 markers = ["slow: statistical accuracy gates; run with `pytest -m slow`"]
 
