@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from topk._sketch import PySketch
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -108,3 +110,16 @@ def test_diagrams_are_mermaid_not_text(name: str) -> None:
     assert "```text" not in text
     drawing = [c for c in text if c in "┌┐└┘├┤┬┴┼│─╭╮╰╯▼▲►◄"]
     assert not drawing, f"{name} contains box-drawing characters: {''.join(sorted(set(drawing)))}"
+
+
+def test_decay_chart_matches_the_library() -> None:
+    # The chart's data points are typed into the Mermaid block, so check them against the code.
+    text = (ROOT / "docs/algorithm.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```mermaid\n(.*?)```", text, flags=re.DOTALL)
+    chart = next(block for block in blocks if "xychart-beta" in block)
+    base = float(re.search(r"b = ([0-9.]+)", chart).group(1))  # type: ignore[union-attr]
+    counters = re.search(r"x-axis .*?\[([^\]]*)\]", chart).group(1)  # type: ignore[union-attr]
+    values = re.search(r"line \[([^\]]*)\]", chart).group(1)  # type: ignore[union-attr]
+    sketch = PySketch(1, 1, base, 32, 1)
+    expected = [round(sketch.decay_probability(int(c)), 4) for c in counters.split(",")]
+    assert [float(v) for v in values.split(",")] == expected
