@@ -112,11 +112,21 @@ def test_it_publishes_without_stored_secrets(workflow: str) -> None:
 
 
 def test_only_the_publish_jobs_may_mint_an_identity_token(workflow: str) -> None:
-    assert "permissions:\n  contents: read\n" in workflow  # workflow-wide default
-    assert "id-token: write" not in job(workflow, "build")
-    assert "id-token: write" not in job(workflow, "smoke-test")
+    # The workflow-wide default is exactly "read the repository", nothing more.
+    top_level = re.search(r"^permissions:\n((?:  .+\n)+)", workflow, re.M)
+    assert top_level, "no workflow-wide permissions block"
+    assert top_level.group(1) == "  contents: read\n"
+    # The only other grants in the file are the two identity tokens, one in each publish job. A
+    # third grant (in the default block, or in build or smoke-test) would raise one of these counts.
+    assert workflow.count("permissions:") == 3
+    assert re.findall(r"^\s*[\w-]+: write\b", workflow, re.M) == [
+        "      id-token: write",
+        "      id-token: write",
+    ]
+    for name in ("build", "smoke-test"):
+        assert "permissions:" not in job(workflow, name)
     for name in ("publish-testpypi", "publish-pypi"):
-        assert "id-token: write" in job(workflow, name)
+        assert "    permissions:\n      id-token: write\n" in job(workflow, name)
 
 
 def test_publishing_waits_for_the_build_and_the_smoke_test(workflow: str) -> None:
