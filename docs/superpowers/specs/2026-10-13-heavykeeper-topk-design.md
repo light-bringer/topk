@@ -40,7 +40,7 @@ TopK(k, *, width=None, depth=2, decay_base=1.08, fingerprint_bits=32,
   .estimate(key) -> int         # sketch query: max counter among buckets whose fingerprint matches
   key in tk                     # is the key currently in the top-k?
   .most_common(n=None) -> list[tuple[K, int]]   # descending by count
-  len(tk), iter(tk), repr(tk); read-only properties k, width, depth, decay_base, total
+  len(tk), iter(tk), repr(tk); read-only properties k, width, depth, decay_base, seed, total
   pickle support via __getstate__/__setstate__ (seed and RNG state included)
 ```
 - `decay_base` is the paper's `b` (must be > 1). This deliberately differs from the `decay = 1/b` used by Redis and the `heavykeeper` package, and the docs say so.
@@ -85,7 +85,7 @@ elif maxv > 0:
     if len(heap) < k:    heap.push(key, maxv)
     elif maxv == n_min + 1: heap.replace_min(key, maxv)      # Opt I (Theorem 1)
 ```
-Admission goes through a small overridable `_admit` method. The benchmarks subclass it to build a "basic" variant (no Opt I/II) for comparison.
+Two private class attributes, `_selective_increment` (Opt II) and `_exact_admission` (Opt I), default to `True`. The benchmarks subclass `TopK` and clear them to build a "basic" variant for comparison, and the tests use the same switches to show what each optimization changes (they differ from the basic algorithm only when a fingerprint collision hands a key another flow's bucket).
 
 **IndexedMinHeap:** `push`, `min_count` (O(1)), `increase` (sift down, since counts only grow), `replace_min` (returns the evicted entry), `get`, `__contains__`, `items_desc()`.
 
