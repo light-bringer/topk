@@ -19,6 +19,9 @@ All notable changes to this project are documented here. The format follows
   scripts in `examples/`, and design notes. Every `>>>` example is run by the test suite.
 - Benchmarks: `python -m benchmarks.accuracy` and `python -m benchmarks.throughput`, slow accuracy
   gates (`pytest -m slow`) and `pytest-benchmark` microbenchmarks (`pytest -m bench`).
+- A release workflow that publishes through PyPI Trusted Publishing (a tag check, a build, a smoke
+  test of the built wheel on the oldest and newest Python, then upload), a TestPyPI dry run, and a
+  maintainer guide (`docs/releasing.md`).
 - CI on CPython 3.10 to 3.14 (Linux, macOS, Windows) and PyPy 3.11, with lint, strict mypy, the
   slow gates, the microbenchmarks and a build check.
 
