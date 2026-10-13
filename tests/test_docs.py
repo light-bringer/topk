@@ -23,7 +23,7 @@ def run_markdown_doctests(name: str) -> doctest.TestResults:
     return runner.summarize()
 
 
-@pytest.mark.parametrize("name", ["docs/examples.md"])
+@pytest.mark.parametrize("name", ["README.md", "docs/examples.md"])
 def test_documentation_examples_run(name: str) -> None:
     results = run_markdown_doctests(name)
     assert results.attempted > 0, f"{name} has no pycon examples"
