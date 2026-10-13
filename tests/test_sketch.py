@@ -115,6 +115,48 @@ def test_decay_probability_is_zero_past_the_cutoff() -> None:
     assert sketch.decay_probability(10**9) == 0.0
 
 
+def assert_is_the_first_negligible_count(b: float, cutoff: int) -> None:
+    assert cutoff >= 1
+    assert b**-cutoff < 2**-53
+    assert cutoff == 1 or b ** -(cutoff - 1) >= 2**-53
+
+
+@pytest.mark.parametrize(
+    "b",
+    [
+        1.08,
+        1.0001,
+        1.5,
+        2.0,
+        10.0,
+        1e6,
+        1e300,
+        1 + 2**-52,
+        # 53 * ln(2) / ln(b) evaluates to exactly 5.0 here although b**-5 is already below 2**-53,
+        # so a floor(...) + 1 formula would answer 6.
+        float.fromhex("0x1.8406003b2ae5dp+10"),
+    ],
+)
+def test_decay_cutoff_is_the_first_count_with_a_negligible_probability(b: float) -> None:
+    assert_is_the_first_negligible_count(b, make(b=b).decay_cutoff)
+
+
+@given(st.floats(min_value=1 + 2**-20, max_value=1e300, allow_nan=False, allow_infinity=False))
+def test_decay_cutoff_holds_for_any_base(b: float) -> None:
+    assert_is_the_first_negligible_count(b, make(b=b).decay_cutoff)
+
+
+def test_a_bucket_at_the_true_cutoff_never_consumes_a_draw() -> None:
+    # b**-5 is already below 2**-53 for this base (see above), so a counter of 5 can never decay
+    # and a draw would be wasted; the scripted RNG fails the test if one is taken.
+    b = float.fromhex("0x1.8406003b2ae5dp+10")
+    assert b**-5 < 2**-53
+    sketch, slots, fp = seeded(5, other=True, b=b, rng=ScriptedRandom())
+    other_fp = sketch.fps[0]
+    assert sketch.insert(slots, fp, True, 0) == 0
+    assert (sketch.fps[0], sketch.counts[0]) == (other_fp, 5)
+
+
 def test_decay_beyond_the_lookup_table_is_still_computed_exactly() -> None:
     # b this close to 1 puts the cutoff far beyond the precomputed table.
     sketch = make(b=1.0001)

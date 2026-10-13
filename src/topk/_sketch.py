@@ -36,6 +36,22 @@ _NEGLIGIBLE = 2.0**-53
 _TABLE_LIMIT = 4096
 
 
+def _decay_cutoff(b: float) -> int:
+    """Return the smallest ``c >= 1`` with ``b ** -c < 2 ** -53``.
+
+    From that count on a decay draw can never succeed, so no draw is taken. The logarithm gives a
+    first guess that rounding can put off by one (e.g. ``53 * ln(2) / ln(b)`` can come out as an
+    exact integer although ``b ** -c`` is already below the threshold), so it is corrected against
+    the actual powers.
+    """
+    c = max(1, math.floor(53 * math.log(2) / math.log(b)))
+    while c > 1 and b ** -(c - 1) < _NEGLIGIBLE:
+        c -= 1
+    while b**-c >= _NEGLIGIBLE:
+        c += 1
+    return c
+
+
 class PySketch:
     """``depth`` x ``width`` buckets of (fingerprint, counter) with exponential-weakening decay."""
 
@@ -101,8 +117,7 @@ class PySketch:
         # A pre-keyed hasher: copying it skips re-absorbing the key block on every call.
         self._hasher = blake2b(digest_size=16, key=seed.to_bytes(8, "big"))
 
-        # b**-c < 2**-53 first holds at this c; from there on a draw can never decay a bucket.
-        self._cutoff = math.floor(53 * math.log(2) / math.log(decay_base)) + 1
+        self._cutoff = _decay_cutoff(decay_base)
         self._table = [decay_base**-c for c in range(min(self._cutoff, _TABLE_LIMIT))]
 
         self._rng = random.Random(seed) if rng is None else rng
