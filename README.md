@@ -2,43 +2,65 @@
 
 [![CI](https://github.com/light-bringer/topk/actions/workflows/ci.yml/badge.svg)](https://github.com/light-bringer/topk/actions/workflows/ci.yml)
 
-Find the **top-k most frequent items** of a data stream in **fixed memory**, however many distinct
-items the stream holds. A pure-Python implementation of **HeavyKeeper** (Gong et al., USENIX ATC
-'18), including the paper's accuracy optimizations. No dependencies, any hashable key, typed,
-picklable.
+Find the **most frequent items** in a stream of data, using a **small, fixed amount of memory**
+however many different items the stream contains. It is a pure-Python implementation of
+**HeavyKeeper** (Gong et al., USENIX ATC 2018). No dependencies, works with any hashable key, fully
+typed, and the state can be pickled.
 
 > **Status: alpha, not on PyPI yet.** Until the first release, install from source:
-> `pip install git+https://github.com/light-bringer/topk`. The distribution will be named
-> `heavykeeper-topk`; the import name is `topk`. Python 3.10+, CPython and PyPy.
+> `pip install git+https://github.com/light-bringer/topk`. The package will be called
+> `heavykeeper-topk`; you import it as `topk`. Needs Python 3.10 or newer; works on CPython and
+> PyPy.
 
 ```pycon
 >>> from topk import TopK
->>> top = TopK(3, seed=1)  # track the 3 most frequent keys
->>> top.update("banana")  # any iterable of hashable keys, or a {key: count} mapping
+>>> top = TopK(3, seed=1)  # keep track of the 3 most frequent keys
+>>> top.update("banana")  # feed it any iterable of hashable keys, or a {key: count} mapping
 >>> top.most_common()
 [('a', 3), ('n', 2), ('b', 1)]
 >>> top.estimate("a"), "n" in top, len(top), top.total
 (3, True, 3, 6)
 ```
 
-## Why HeavyKeeper
+**Contents:** [What it is for](#what-it-is-for) · [How it works](#how-it-works-in-short) ·
+[Usage](#usage) · [Choosing parameters](#choosing-parameters) ·
+[How accurate is it?](#how-accurate-is-it) · [Other implementations](#other-implementations) ·
+[Limitations](#limitations) · [Development](#development)
 
-A `Counter` needs one entry per distinct key. When the stream holds millions of distinct keys
-(client IPs, URLs, user IDs, flow identifiers) but you only want the busiest few, that is wasteful.
-HeavyKeeper keeps a small table of (fingerprint, counter) buckets and **decays** the counters of
-keys that collide with a different key: a small key's counter melts away under collisions, a large
-key's counter is hard to dislodge. The result is accurate counts for the heavy keys in memory that
-does not grow with the stream.
+## What it is for
 
-- **Bounded memory:** `12 * depth * width` bytes for the sketch (24.6 KB at the defaults of width
-  1024 and depth 2) plus roughly 84 bytes per tracked key.
-- **Accurate where it matters:** on a 500k-item Zipf stream the default settings find the true top
-  100 with precision 1.000 and a mean relative error under 0.1% (see [Benchmarks](#benchmarks)).
-- **Counts are never inflated:** a reported count never exceeds the true count (the paper's
-  Theorem 2), barring a fingerprint collision, which 32-bit fingerprints make negligible.
-- **Optimizations of the paper:** newcomers enter a full top-k set only at exactly `n_min + 1`
-  (Optimization I), and a bucket matching only by fingerprint is not incremented unless its flow is
-  monitored (Optimization II). Both matter when fingerprints are small; see the benchmarks.
+Counting every item exactly (a `collections.Counter`) needs memory for every *distinct* item. If
+the stream holds millions of distinct items, such as client IP addresses, URLs, user IDs or search
+terms, and you only care about the busiest few, that is wasteful.
+
+`TopK` answers "what are the `k` most frequent items, and roughly how often did each occur?" using
+memory that depends on the settings you choose, not on the length of the stream or the number of
+distinct items. Typical uses: the busiest clients in an access log, the most requested URLs, the
+hottest keys in a cache, trending terms.
+
+## How it works, in short
+
+HeavyKeeper keeps a small table of counters, each stamped with a short fingerprint of the item that
+last used it. When an item arrives it goes to the counters its hash picks. A counter that already
+carries the item's fingerprint is increased. A counter carrying a *different* fingerprint is
+decreased by one, but only with a probability that shrinks as the counter grows. So a rare item's
+counter is quickly worn away by other items, while a frequent item's counter is almost never worn
+away. A small separate list remembers which `k` items currently have the biggest counters.
+
+That is the whole idea; [docs/algorithm.md](docs/algorithm.md) explains it step by step with
+diagrams. It gives you:
+
+- **Fixed memory:** about `12 * depth * width` bytes (24.6 KB with the default settings) plus
+  roughly 84 bytes per tracked item.
+- **Accurate counts for the items that matter:** on a test stream of 500,000 items, the default
+  settings found the true top 100 every time, and the reported counts were off by less than 0.1% on
+  average (see [How accurate is it?](#how-accurate-is-it)).
+- **Counts that are not inflated:** a reported count is never higher than the true count, except
+  in the rare case where two different items get the same fingerprint (see the next point).
+- **Protection against look-alike items:** two refinements from the paper stop a rare item from
+  borrowing a frequent item's count when the two happen to share a fingerprint. With the default
+  32-bit fingerprints this almost never happens; with short fingerprints it is common, and the
+  refinements are what keep the results usable (see the benchmarks below).
 
 ## Usage
 
@@ -60,24 +82,33 @@ False
 0
 ```
 
-| Call | What it does |
-|---|---|
-| `TopK(k, *, width=None, depth=2, decay_base=1.08, fingerprint_bits=32, seed=None, key_encoder=None)` | Create a tracker. |
-| `add(key, count=1)` | Count `count` occurrences. The key is hashed once, but `count` unit insertions follow, so the cost is `O(count * depth)`: it is not a constant-time bulk update. |
-| `update(items)` | Count every key of an iterable, or add every `key: count` of a mapping (like `Counter.update`). |
-| `most_common(n=None)` | The tracked `(key, count)` pairs, largest first. Ties are in no specified order. |
-| `estimate(key)` | The sketch's current estimate for `key`: 0 if it holds no bucket for it. A small key outside the top k can still show a small count while its buckets survive; use `key in top` to ask about membership. |
-| `key in top`, `len(top)`, `iter(top)` | Membership in the top k, number tracked, tracked keys by count. |
-| `top.k`, `.width`, `.depth`, `.decay_base`, `.seed`, `.total` | Read-only settings; `total` is the number of occurrences counted. |
+What you can call:
 
-Not thread-safe: guard a shared instance with a lock.
+- `TopK(k, *, width=None, depth=2, decay_base=1.08, fingerprint_bits=32, seed=None,
+  key_encoder=None)` creates a tracker for the `k` most frequent keys. See
+  [Choosing parameters](#choosing-parameters).
+- `add(key, count=1)` counts `count` occurrences of `key`. It costs time proportional to `count`;
+  it is a convenience, not a constant-time bulk update.
+- `update(items)` counts every key of an iterable, or adds each `key: count` of a mapping, like
+  `Counter.update`.
+- `most_common(n=None)` returns the tracked `(key, count)` pairs, largest count first (keys with
+  equal counts come in no particular order). Pass `n` to get only the first `n`.
+- `estimate(key)` asks the sketch what it currently believes `key`'s count is. It is 0 for a key the
+  sketch holds nothing for. A rare key outside the top `k` can still show a small count for a while,
+  so use `key in top` to ask whether a key is in the top `k`.
+- `key in top`, `len(top)` and `iter(top)` give membership in the top `k`, the number of tracked
+  keys, and the tracked keys from largest to smallest.
+- `top.k`, `top.width`, `top.depth`, `top.decay_base`, `top.seed` and `top.total` are read-only;
+  `total` is the number of occurrences counted so far.
+
+A `TopK` is not thread-safe: guard a shared instance with a lock.
 
 ### Keys
 
-Keys must be **hashable**. The default encoder handles `None`, `bool`, `int`, `str`, `bytes` and
-tuples of these (and subclasses such as `IntEnum` or `namedtuple` that do not redefine `==` or
-`hash`). For anything else, pass `key_encoder`, a function from a key to `bytes` that maps equal
-keys to equal bytes:
+Keys must be **hashable**. Out of the box, `None`, `bool`, `int`, `str`, `bytes` and tuples of these
+work, and so do subclasses such as `IntEnum` or `namedtuple` that do not redefine `==` or `hash`.
+For any other key type, pass `key_encoder`: a function from a key to `bytes` that gives equal keys
+equal bytes.
 
 ```pycon
 >>> import struct
@@ -91,14 +122,14 @@ keys to equal bytes:
 (2, 2)
 ```
 
-Mind what `==` means for your keys: `-0.0 == 0.0` and `1 == 1.0`, so an encoder that used `repr()`
-would split one key's count in two. Ideally different keys also encode differently; if two do
-share bytes they share sketch buckets, which costs accuracy but never correctness of the set.
+Think about what `==` means for your keys. `-0.0 == 0.0` and `1 == 1.0`, so an encoder built on
+`repr()` would split one key's count in two. Ideally different keys also encode differently; if two
+happen to share bytes they share counters, which costs some accuracy.
 
-Keys are encoded to bytes (not passed to `hash()`) because the built-in hash of `str` and `bytes`
-changes between processes, which would make a pickled sketch useless. If the instance is to be
-pickled, `key_encoder` must be a module-level function, not a lambda.
-See [docs/examples.md](docs/examples.md) for a worked example.
+Keys are turned into bytes, rather than passed to Python's `hash()`, because the built-in hash of a
+`str` or `bytes` changes from one process to the next, which would make a saved sketch useless. If
+you want to pickle the `TopK`, `key_encoder` must be a function defined at module level, not a
+lambda. There is a worked example in [docs/examples.md](docs/examples.md).
 
 ### Saving state
 
@@ -112,8 +143,8 @@ See [docs/examples.md](docs/examples.md) for a worked example.
 [('b', 5), ('a', 2)]
 ```
 
-A restored instance continues exactly as an uninterrupted one would. State is guaranteed readable
-only by the same release of the library; incompatible state raises `ValueError`.
+A restored instance carries on exactly as an uninterrupted one would. State is guaranteed to load
+only with the same release of the library; state from an incompatible version raises `ValueError`.
 
 > **Only unpickle data you trust.** `pickle.loads` can run arbitrary code, and it does so before
 > `TopK` gets to check the version, so that check guards against version mismatches, not against
@@ -121,23 +152,34 @@ only by the same release of the library; incompatible state raises `ValueError`.
 
 ## Choosing parameters
 
-| Parameter | Default | Guidance |
-|---|---|---|
-| `k` | required | How many keys you want. The sketch should be sized for the *k-th* key, not the first. |
-| `width` | `max(1024, 32 * k)` | Buckets per row. The main accuracy and memory knob. At the default, a 500k-item Zipf stream gave precision 1.000 and ARE under 0.001. Double it if the k-th and (k+1)-th keys are nearly tied. |
-| `depth` | 2 | Rows (hash functions). The paper uses 2; more rows cost time for little gain. |
-| `decay_base` | 1.08 | The paper's `b`. A colliding insertion decays a counter `C` with probability `b ** -C`. Larger `b` forgets small keys faster; the paper uses 1.08. Note this is `1 / decay` in the convention of Redis and the `heavykeeper` package. |
-| `fingerprint_bits` | 32 | Collision resistance, 1 to 32. Storage is 4 bytes per bucket either way, so lowering it saves no memory here; it exists to study small fingerprints (see below). |
-| `seed` | random | Seeds hashing and the decay RNG. Pass an int for reproducible results; read it back from `top.seed`. |
+Start with the defaults. If the results look wrong, make `width` larger first.
 
-**Memory** (measured on CPython 3.13): the buckets take 12 bytes each, so `12 * depth * width`
-bytes (the default `width=1024, depth=2` is 24.6 KB); each tracked key adds about 84 bytes plus the
-key object itself.
+- **`k`** (required) is how many keys you want. Size the sketch for the *k*-th key, not for the
+  most frequent one.
+- **`width`** (default `max(1024, 32 * k)`) is the number of counters per row. It is the main
+  accuracy and memory setting: wider means more accurate and a little more memory. At the default, a
+  500,000-item test stream gave the right top 100 with reported counts off by under 0.1% on average.
+  Double it if the *k*-th and the next key are nearly tied.
+- **`depth`** (default 2) is the number of rows, each giving a key its own position. The paper uses
+  2; more rows cost time for little gain.
+- **`decay_base`** (default 1.08, the paper's `b`) controls how readily small counters are worn
+  down: a colliding item lowers a counter `C` with probability `b ** -C`. A larger value forgets
+  small keys faster. Note that Redis and the `heavykeeper` package use `1 / b` for the same idea.
+- **`fingerprint_bits`** (default 32, from 1 to 32) is how long each key's fingerprint is. Shorter
+  fingerprints collide more often. Storage is 4 bytes per counter either way, so lowering it saves
+  no memory here; the setting exists to study small fingerprints.
+- **`seed`** (default random) seeds the hashing and the random decay. Pass an integer for
+  reproducible results; `top.seed` tells you the one in use.
 
-**Error.** For a heavy key held in its bucket the paper's Theorem 3 bounds the chance that the
-estimate falls short by `epsilon * N` (N is the stream length, `n` the key's true count) by
-`1 / (epsilon * width * n * (b - 1))`. For `width = 3200`, `n = 5000`, `b = 1.08` and a tolerated
-shortfall of 100 in a 500k stream (`epsilon = 100 / 500000`):
+**Memory**, measured on CPython 3.13: each counter takes 12 bytes, so the sketch is
+`12 * depth * width` bytes (24.6 KB for the defaults of `width=1024`, `depth=2`), and each tracked
+key adds about 84 bytes plus the key object itself.
+
+**An error bound, if you want a number.** For a frequent key that holds on to its counter, the
+paper's Theorem 3 limits the chance that the estimate falls short of the true count by more than
+`epsilon * N` (`N` is the length of the stream) to `1 / (epsilon * width * n * (b - 1))`, where `n`
+is the key's true count. For `width = 3200`, `n = 5000`, `b = 1.08`, and a tolerated shortfall of
+100 in a stream of 500,000 (so `epsilon = 100 / 500000`):
 
 ```pycon
 >>> epsilon, width, n, b = 100 / 500_000, 3200, 5000, 1.08
@@ -145,74 +187,89 @@ shortfall of 100 in a 500k stream (`epsilon = 100 / 500000`):
 0.0039
 ```
 
-That is the paper's bound under its assumptions (no fingerprint collisions, an elephant key that
-stays in its bucket); measured errors are far smaller.
+That is under the paper's assumptions (no fingerprint collisions, and a frequent key that keeps its
+counter); in practice the measured errors are much smaller.
 
-## Differences from the paper
+## How accurate is it?
 
-The implementation follows Algorithm 1 with Optimizations I and II. Deliberate differences:
+The tests use a *Zipf* stream: a few keys are very common and most are rare, which is what real
+traffic usually looks like. Three numbers describe the result:
 
-1. **Optimization II compares `c <= n_min`**, as the authors' code does. The paper prints
-   `C < n_min`; with a strict comparison a newcomer's counter stalls at `n_min`, so it could never
-   reach `n_min + 1` and enter a full set.
-2. `n_min` is 0 until the top-k set is full (as in the authors' code).
-3. Empty buckets are handled explicitly. Read literally, the pseudocode would decrement an empty
-   bucket to -1.
-4. A key whose estimate is 0 is never admitted to the set.
-5. The decay probability is exactly `b ** -C` (the authors' code uses `1 / floor(b ** C)`).
-6. Fingerprints are 32 bits by default (the paper used 16); 1 to 32 are accepted.
-7. Hashing is keyed BLAKE2b with double hashing over a canonical key encoding, so bucket positions
-   survive pickling. (The authors' code uses BOBHash.)
-8. Counters are 64-bit, so they never saturate.
+- **precision**: the fraction of the true top `k` that were found (1.0 is perfect);
+- **ARE**, the average relative error: how far, on average, a reported count is from the true count,
+  as a fraction of the true count (0.01 means 1% off);
+- **AAE**, the average absolute error: the same, as a plain number of occurrences.
 
-Optimization III (replacing the heap by a threshold array) is not implemented.
-
-## Benchmarks
-
-500k-item Zipf stream (skew 1.1, 100k possible keys), `k = 100`, CPython 3.13, one machine:
+A stream of 500,000 items (skew 1.1, 100,000 possible keys), `k = 100`, on CPython 3.13, one
+machine:
 
 | Configuration | precision | ARE | AAE |
 |---|---|---|---|
-| default (32-bit fingerprints, `width = 32k`), five seeds | 1.000 | 0.0005 to 0.0008 | 0.3 to 0.5 |
+| defaults (32-bit fingerprints, `width = 32k`), five seeds | 1.000 | 0.0005 to 0.0008 | 0.3 to 0.5 |
 | 8-bit fingerprints, `width = 8k`: this library | 0.99 to 1.00 | about 0.005 | about 3 |
-| 8-bit fingerprints, `width = 8k`: without Optimizations I and II | 0.75 to 0.82 | 385 to 800 | hundreds |
+| 8-bit fingerprints, `width = 8k`: without the two refinements | 0.75 to 0.82 | 385 to 800 | hundreds |
 
-With 32-bit fingerprints the optimizations never fire (fingerprint collisions are essentially
-impossible), so the two variants are identical. With 8-bit fingerprints they are the difference
-between a usable result and a useless one, which is why they are kept.
+With 32-bit fingerprints two different keys almost never share one, so the two refinements never
+come into play and the variants give identical results. With 8-bit fingerprints sharing is common,
+and the refinements are the difference between a usable result and a useless one. That is why they
+are included.
 
-Throughput is about **0.3 million inserts per second** on CPython 3.13. The Rust-backed
-[`heavykeeper`](https://pypi.org/project/heavykeeper/) package is roughly 20 times faster at
-comparable accuracy (it takes `str` keys only and implements the basic algorithm without the
-optimizations above). A compiled backend for this library is planned.
+**Speed.** About 0.3 million inserts per second on CPython 3.13. The Rust-backed
+[`heavykeeper`](https://pypi.org/project/heavykeeper/) package is roughly 20 times faster at similar
+accuracy; it accepts `str` keys only and implements the basic algorithm without the refinements. A
+compiled backend for this library is planned.
 
-Reproduce, from a source checkout (`pip install -e . --group dev`):
+To reproduce these numbers from a source checkout (`pip install -e . --group dev`):
 
 ```console
 $ python -m benchmarks.accuracy --fingerprint-bits 8 32 --with-heavykeeper   # accuracy table
 $ python -m benchmarks.throughput                                            # inserts per second
-$ pytest -m slow                                                             # accuracy gates, ~15 s
+$ pytest -m slow                                                             # accuracy checks, ~15 s
 $ pytest -m bench --benchmark-only                                           # microbenchmarks
 ```
 
+## Differences from the paper
+
+You can skip this section unless you have read the paper. The implementation follows its
+Algorithm 1 with both refinements (the paper calls them Optimization I and II) and departs from it
+in a few deliberate ways:
+
+1. **Optimization II compares `c <= n_min`**, as the authors' code does. The paper prints
+   `C < n_min`; with that strict comparison a newcomer's counter would stall one short of the value
+   it needs, so a new frequent key could never enter a full set. (`n_min` is the smallest count in
+   the top-k set.)
+2. `n_min` is 0 until the top-k set is full, as in the authors' code.
+3. Empty counters are handled explicitly. Read literally, the pseudocode would decrement an empty
+   counter to -1.
+4. A key whose estimate is 0 is never admitted to the set.
+5. The decay probability is exactly `b ** -C`; the authors' code uses `1 / floor(b ** C)`.
+6. Fingerprints are 32 bits by default (the paper used 16); 1 to 32 are accepted.
+7. Hashing is keyed BLAKE2b with double hashing over a canonical encoding of the key, so counter
+   positions survive pickling. (The authors' code uses BOBHash.)
+8. Counters are 64-bit, so they never saturate.
+
+The paper's Optimization III (replacing the heap with a threshold array) is not implemented.
+
 ## Other implementations
 
-| | this library | [`heavykeeper`](https://pypi.org/project/heavykeeper/) | [Redis `TOPK`](https://redis.io/docs/stack/bloom/TopK_Commands) |
-|---|---|---|---|
-| Language | pure Python | Rust, via PyO3 | C module for a Redis server |
-| Keys | any hashable key (default encoder: `None`, `bool`, `int`, `str`, `bytes`, tuples) | `str` only | strings |
-| Paper's Optimization II | yes | no | no |
-| Pickle / persistence | `pickle` | not exposed | server persistence |
-| Needs | nothing, any platform, PyPy | CPython 3.11+ wheel or a Rust toolchain | a running Redis server |
+- **[`heavykeeper`](https://pypi.org/project/heavykeeper/) on PyPI** is a Rust implementation with
+  Python bindings. It is much faster but takes `str` keys only, does not expose pickling, and
+  implements the basic algorithm without the paper's second refinement. It needs CPython 3.11+
+  (wheels are provided) or a Rust toolchain.
+- **[Redis `TOPK`](https://redis.io/docs/stack/bloom/TopK_Commands)** is a C module for the Redis
+  server. It works on strings and needs a running Redis server; it also implements the basic
+  algorithm.
+- **This library** is pure Python, accepts any hashable key, includes both refinements, can be
+  pickled, and runs anywhere Python does (PyPy included), at the cost of speed.
 
 ## Limitations
 
-- Results are approximate: only the tracked keys have meaningful counts (`estimate` of any other
-  key is a lower bound that may be 0), and near-ties at the k-th place can go either way.
-- Counts only grow: no deletion, no time decay, no merging of two sketches. To count over time
-  windows, keep one `TopK` per window (see [docs/examples.md](docs/examples.md)).
-- `add(key, count)` costs `O(count)`.
-- Pure Python is slow compared with a compiled implementation (see Benchmarks).
+- Results are approximate. Only the tracked keys have meaningful counts (`estimate` of any other key
+  may be 0 or a small number), and a near-tie at the *k*-th place can go either way.
+- Counts only grow: there is no deletion, no time decay, and no way to merge two sketches. To count
+  over time windows, keep one `TopK` per window (see [docs/examples.md](docs/examples.md)).
+- `add(key, count)` costs time proportional to `count`.
+- Pure Python is slow compared with a compiled implementation (see the speed note above).
 
 ## Development
 
@@ -220,12 +277,13 @@ $ pytest -m bench --benchmark-only                                           # m
 $ python -m venv .venv && . .venv/bin/activate
 $ pip install -e . --group dev        # needs pip 25.1+
 $ pytest                              # fast suite, including the examples and these docs
-$ pytest -m slow                      # statistical accuracy gates
+$ pytest -m slow                      # statistical accuracy checks
 $ pytest -m bench --benchmark-only    # microbenchmarks
 $ ruff check . && ruff format --check . && mypy
 ```
 
-The design is in [docs/superpowers/specs/](docs/superpowers/specs/2026-10-13-heavykeeper-topk-design.md).
+More documentation is in [docs/](docs/README.md): the algorithm explained with diagrams, runnable
+examples, and the design notes.
 
 ## Reference
 
