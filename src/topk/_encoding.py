@@ -18,6 +18,12 @@ Wire format (``u64`` is an 8-byte big-endian unsigned integer):
 ``tuple`` ``b"T" + u64(item count) + concatenated item encodings``
 ========  ============================================================
 
+Subclasses of ``str``, ``int``, ``bytes`` and ``tuple`` (``bool``, ``IntEnum``, ``namedtuple``,
+...) are accepted only if they inherit ``__eq__`` and ``__hash__`` from the builtin unchanged. A
+subclass that redefines equality can make distinct dict keys encode alike (or equal ones encode
+differently), silently merging or splitting their counts, so it must go through a custom
+``key_encoder``.
+
 Pickled sketches depend on this format, so changing it is a breaking change.
 """
 
@@ -33,21 +39,26 @@ def _u64(n: int) -> bytes:
 def encode_key(key: object) -> bytes:
     """Return the canonical byte encoding of ``key``.
 
-    Supports ``None``, ``bool``, ``int``, ``str``, ``bytes`` and (nested) tuples of these.
+    Supports ``None``, ``bool``, ``int``, ``str``, ``bytes`` and (nested) tuples of these, plus
+    subclasses that keep their base type's equality and hashing.
 
     Raises:
         TypeError: for any other type. Pass a custom ``key_encoder`` to ``TopK`` to count other
             kinds of keys.
     """
     if isinstance(key, str):
+        _require_base_equality(key, str)
         data = key.encode("utf-8", "surrogatepass")
         return b"S" + _u64(len(data)) + data
     # bool is an int subclass and True == 1, so it encodes as the int it equals.
     if isinstance(key, int):
+        _require_base_equality(key, int)
         return _encode_int(key)
     if isinstance(key, bytes):
+        _require_base_equality(key, bytes)
         return b"B" + _u64(len(key)) + key
     if isinstance(key, tuple):
+        _require_base_equality(key, tuple)
         return _encode_tuple(key)
     if key is None:
         return b"N"
@@ -56,6 +67,19 @@ def encode_key(key: object) -> bytes:
         "bool, int, str, bytes and tuples of these; pass key_encoder= to count other (hashable) "
         "key types"
     )
+
+
+def _require_base_equality(key: object, base: type) -> None:
+    t = type(key)
+    if t is not base and not _keeps_base_equality(t, base):
+        raise TypeError(
+            f"unsupported key type {t.__name__!r}: it overrides __eq__ or __hash__ of "
+            f"{base.__name__}, so equal keys might not encode alike; pass key_encoder= to count it"
+        )
+
+
+def _keeps_base_equality(t: type, base: type) -> bool:
+    return t.__eq__ is base.__eq__ and t.__hash__ is base.__hash__
 
 
 def _encode_int(n: int) -> bytes:

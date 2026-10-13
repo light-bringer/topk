@@ -1,4 +1,5 @@
 import enum
+from typing import NamedTuple
 
 import pytest
 from hypothesis import given
@@ -115,3 +116,63 @@ def test_int_and_str_subclasses_encode_like_their_base_value() -> None:
 def test_unsupported_types_raise_type_error_naming_key_encoder(key: object) -> None:
     with pytest.raises(TypeError, match="key_encoder"):
         encode_key(key)
+
+
+class _Point(NamedTuple):
+    x: int
+    y: int
+
+
+class _Mode(str, enum.Enum):
+    FAST = "fast"
+
+
+class _IdentityInt(int):
+    """Equal values but distinct dict keys: equality falls back to identity."""
+
+    __eq__ = object.__eq__
+    __hash__ = object.__hash__
+
+
+class _CaseInsensitiveStr(str):
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, str) and self.lower() == other.lower()
+
+    def __hash__(self) -> int:
+        return hash(self.lower())
+
+
+class _LooseBytes(bytes):
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    def __hash__(self) -> int:
+        return 0
+
+
+class _LooseTuple(tuple):  # type: ignore[type-arg]
+    __hash__ = object.__hash__
+
+
+def test_subclasses_that_keep_value_semantics_encode_like_their_base() -> None:
+    assert encode_key(_Point(1, 2)) == encode_key((1, 2))
+    assert encode_key(_Mode.FAST) == encode_key("fast")
+    assert encode_key((_Point(1, 2), _Color.RED)) == encode_key(((1, 2), 1))
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        _IdentityInt(7),
+        _CaseInsensitiveStr("a"),
+        _LooseBytes(b"a"),
+        _LooseTuple((1,)),
+        (1, _IdentityInt(7)),  # also when nested
+    ],
+)
+def test_subclasses_that_override_equality_are_rejected(key: object) -> None:
+    # Such keys can be distinct heap keys with identical encodings (or equal heap keys with
+    # different ones), which would silently conflate or split their counts.
+    with pytest.raises(TypeError, match="__eq__") as excinfo:
+        encode_key(key)
+    assert "key_encoder" in str(excinfo.value)
