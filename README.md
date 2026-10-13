@@ -299,7 +299,7 @@ $ ruff check . && ruff format --check . && mypy
 ```
 
 More documentation is in [docs/](docs/README.md): the algorithm explained with diagrams, runnable
-examples, and the design notes.
+examples, the design notes, and (for maintainers) how to make a release.
 
 ## Reference
 

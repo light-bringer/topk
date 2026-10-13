@@ -23,7 +23,8 @@ kernel can replace the slow part without changing the public API.
 | Benchmarks and measurements | Done and merged |
 | README, algorithm guide, examples guide, runnable examples | Done |
 | CI on CPython 3.10 to 3.14 (Linux, macOS, Windows) and PyPy 3.11 | Done |
-| Release workflow and first publication to PyPI | **Not done** (see [Releasing](#releasing)) |
+| Release workflow and maintainer guide | Done (see [Releasing](#releasing)) |
+| First publication to PyPI | **Not done**: needs the maintainer's PyPI accounts |
 | Compiled backend, other uses from the paper | Later (see [Roadmap](#roadmap)) |
 
 ## Why a new library
@@ -185,15 +186,19 @@ The README has the full table, including the 8-bit fingerprint runs.
 
 ## Releasing
 
-Not done yet. What is needed:
+The release workflow (`.github/workflows/release.yml`) exists. On a `v*` tag it checks that the tag
+matches the version in `pyproject.toml`, builds the sdist and wheel, runs `twine check`, installs the
+built wheel on Linux, macOS, Windows and PyPy and runs a small program with it, and then publishes
+through PyPI Trusted Publishing, so no token is stored. Run by hand it does a dry run to TestPyPI.
+The tag check is a small tested script, and tests pin the workflow's security-relevant structure.
 
-1. A release workflow that, on a `v*` tag, builds the sdist and wheel, runs `twine check`, and
-   publishes through PyPI Trusted Publishing (no stored tokens).
-2. **Steps only the maintainer can do:** create the PyPI and TestPyPI accounts, and register a
-   pending trusted publisher for `heavykeeper-topk` pointing at this repository and the release
-   workflow.
-3. Publish 0.1.0 to TestPyPI first, install it into a clean virtual environment, and then publish
-   to PyPI. Change the version from `0.1.0.dev0` and date the changelog entry at that point.
+The workflow has not published anything yet. What is left:
+
+1. **Steps only the maintainer can do:** create the PyPI and TestPyPI accounts, register a pending
+   trusted publisher on each for `heavykeeper-topk`, and create the `pypi` and `testpypi`
+   environments on GitHub. [docs/releasing.md](../../releasing.md) has the exact values.
+2. Run the TestPyPI dry run, install the result into a clean virtual environment, then release
+   0.1.0: change the version from `0.1.0.dev0`, date the changelog entry, and push the tag.
 
 ## Roadmap
 
@@ -219,3 +224,4 @@ request.
 | 5 | Compact bucket storage, the benchmark scripts and the accuracy gates |
 | 6 | README, the examples guide, runnable examples, microbenchmarks |
 | 7 | The algorithm guide with diagrams, and a readability pass over all documentation |
+| 8 | The release workflow and the maintainer guide |
