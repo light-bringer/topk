@@ -2,6 +2,7 @@ import hashlib
 import math
 import pickle
 import random
+from array import array
 
 import pytest
 from hypothesis import given
@@ -51,6 +52,12 @@ def reference_locate(
     h2 = ((x >> 64) & (2**32 - 1)) | 1
     fp = (x >> 96) & ((1 << fp_bits) - 1)
     return tuple(j * width + (h1 + j * h2) % width for j in range(depth)), fp
+
+
+def load(sketch: PySketch, fps: list[int], counts: list[int]) -> None:
+    """Overwrite all buckets of a small sketch."""
+    sketch.fps[:] = array("I", fps)
+    sketch.counts[:] = array("Q", counts)
 
 
 # --- hashing ---------------------------------------------------------------------------------
@@ -252,11 +259,10 @@ def test_figure_1_example_across_three_arrays() -> None:
     #   array 3: (F3, 7)   own fingerprint                  -> incremented to 8
     sketch = make(width=1, depth=3, rng=ScriptedRandom(0.5, 0.0))
     slots, f3 = sketch.locate(b"f3")
-    sketch.fps[:] = [f3 + 1, f3 + 2, f3]
-    sketch.counts[:] = [21, 1, 7]
+    load(sketch, [f3 + 1, f3 + 2, f3], [21, 1, 7])
     assert sketch.insert(slots, f3, True, 0) == 8
-    assert sketch.fps == [f3 + 1, f3, f3]
-    assert sketch.counts == [21, 1, 8]
+    assert list(sketch.fps) == [f3 + 1, f3, f3]
+    assert list(sketch.counts) == [21, 1, 8]
 
 
 # --- estimate --------------------------------------------------------------------------------
@@ -265,16 +271,14 @@ def test_figure_1_example_across_three_arrays() -> None:
 def test_estimate_is_the_largest_count_among_matching_fingerprints() -> None:
     sketch = make(width=1, depth=3)
     slots, fp = sketch.locate(b"a")
-    sketch.fps[:] = [fp, fp + 1, fp]
-    sketch.counts[:] = [4, 99, 9]
+    load(sketch, [fp, fp + 1, fp], [4, 99, 9])
     assert sketch.estimate(slots, fp) == 9
 
 
 def test_estimate_is_zero_when_no_fingerprint_matches() -> None:
     sketch = make(width=1, depth=2)
     slots, fp = sketch.locate(b"a")
-    sketch.fps[:] = [fp + 1, fp + 2]
-    sketch.counts[:] = [5, 6]
+    load(sketch, [fp + 1, fp + 2], [5, 6])
     assert sketch.estimate(slots, fp) == 0
     assert make().estimate(*make().locate(b"a")) == 0
 
@@ -358,3 +362,32 @@ def test_setstate_rejects_an_unknown_scheme() -> None:
 def test_invalid_parameters_raise_value_error(kwargs: dict[str, float], match: str) -> None:
     with pytest.raises(ValueError, match=match):
         make(**kwargs)  # type: ignore[arg-type]
+
+
+# --- compact storage -------------------------------------------------------------------------
+
+
+def test_buckets_are_compact_arrays() -> None:
+    # A list of 32-bit fingerprints holds one ~28-byte int object per bucket; arrays hold 4 bytes.
+    sketch = make(width=1000, depth=2)
+    assert isinstance(sketch.fps, array)
+    assert isinstance(sketch.counts, array)
+    assert sketch.fps.itemsize >= 4
+    assert sketch.counts.itemsize == 8
+
+
+def test_fingerprints_and_counters_use_their_full_range() -> None:
+    sketch = make(width=1)
+    slots, _ = sketch.locate(b"a")
+    top = 2**32 - 1
+    assert sketch.insert(slots, top, False, 0) == 1
+    assert sketch.estimate(slots, top) == 1
+    sketch.counts[0] = 2**63
+    assert sketch.insert(slots, top, True, 0) == 2**63 + 1
+
+
+def test_pickled_state_is_the_raw_bucket_data_plus_a_small_header() -> None:
+    sketch = make(width=10_000, depth=2)
+    buckets = 10_000 * 2
+    # The header is dominated by the 625-word Mersenne Twister state (about 3.8 kB).
+    assert len(pickle.dumps(sketch)) <= (4 + 8) * buckets + 8_000
