@@ -53,6 +53,21 @@ jobs:
       - run: python -m pip install -e . --group dev
       - run: pytest -m slow
 
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -U pip
+      - run: python -m pip install -e . --group dev
+      - run: pytest -m bench --benchmark-only --benchmark-json=bench.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: bench.json
+
   build:
     runs-on: ubuntu-latest
     steps:

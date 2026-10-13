@@ -32,6 +32,10 @@ class TopK(Generic[K]):
 
     Not thread-safe: guard concurrent use with a lock.
 
+    Instances can be pickled, and an unpickled instance continues exactly where it left off. Only
+    unpickle data you trust: ``pickle.loads`` can run arbitrary code before ``TopK`` gets to
+    check the state version, so that check guards against version mismatches, not malicious data.
+
     Args:
         k: How many keys to track (``>= 1``).
         width: Buckets per array. Larger is more accurate. Defaults to ``max(1024, 32 * k)``.
@@ -128,10 +132,12 @@ class TopK(Generic[K]):
     # --- querying ----------------------------------------------------------------------------
 
     def estimate(self, key: K) -> int:
-        """Return the sketch's current estimate of ``key``'s count (0 if it is not held).
+        """Return the sketch's current estimate of ``key``'s count.
 
-        Never exceeds the true count (barring fingerprint collisions); keys outside the top ``k``
-        are usually reported as 0.
+        Never exceeds the true count (barring fingerprint collisions). It is 0 for a key the
+        sketch holds no bucket for: one never seen, or one whose counters have decayed away. A key
+        outside the top ``k`` may still show a small estimate while its buckets survive, so use
+        ``key in top`` or ``most_common()`` to ask what is in the top ``k``.
         """
         slots, fp = self._sketch.locate(self._encode(key))
         return self._sketch.estimate(slots, fp)
