@@ -28,7 +28,7 @@ src/topk/
   _sketch.py              # PySketch kernel: hashing, d*w buckets, decay table, insert and estimate
   _topk.py                # TopK public class (Algorithm 1 orchestration)
   py.typed
-tests/  benchmarks/  .github/workflows/{ci.yml,release.yml}
+tests/  benchmarks/  examples/  docs/examples.md  .github/workflows/{ci.yml,release.yml}
 ```
 
 ### Public API (v0.1, the only contract; everything prefixed `_` is private)
@@ -139,6 +139,7 @@ Two private class attributes, `_selective_increment` (Opt II) and `_exact_admiss
 **Phase 5: Docs and release**
 - README: install, quickstart, how to pick parameters (memory vs. precision, using the Theorem 3 bound), the list of differences from the paper, a BibTeX citation of the paper, and a comparison with the `heavykeeper` and Redis implementations.
 - Docstrings on every public method; CHANGELOG.
+- Built beyond the original plan: `examples/` (four runnable scripts, typed and tested), `docs/examples.md` (a guide with recipes), a `tests/test_docs.py` that runs the `pycon` examples of the README and the guide, and `pytest-benchmark` microbenchmarks behind a `bench` marker with a CI job that keeps the results as an artifact. Documentation examples are doctests so they cannot rot.
 - `release.yml`: on a `v*` tag, run `python -m build`, `twine check`, then publish with `pypa/gh-action-pypi-publish` via PyPI Trusted Publishing.
 - **Steps only you can do:** create the PyPI and TestPyPI accounts, and add a "pending trusted publisher" for `heavykeeper-topk` → `light-bringer/topk` / `release.yml`.
 - Publish 0.1.0 to TestPyPI first, check `pip install` in a clean virtual environment, then publish to PyPI.
