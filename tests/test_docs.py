@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from topk._sketch import PySketch
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -23,14 +25,14 @@ def run_markdown_doctests(name: str) -> doctest.TestResults:
     return runner.summarize()
 
 
-@pytest.mark.parametrize("name", ["README.md", "docs/examples.md"])
+@pytest.mark.parametrize("name", ["README.md", "docs/examples.md", "docs/algorithm.md"])
 def test_documentation_examples_run(name: str) -> None:
     results = run_markdown_doctests(name)
     assert results.attempted > 0, f"{name} has no pycon examples"
     assert results.failed == 0
 
 
-@pytest.mark.parametrize("name", ["README.md", "docs/examples.md"])
+@pytest.mark.parametrize("name", ["README.md", "docs/examples.md", "docs/algorithm.md"])
 def test_documentation_has_no_code_block_that_is_never_run(name: str) -> None:
     # A plain ```python fence is displayed but never executed, so it can drift from the library.
     # Write runnable examples as ```pycon (run by the test above); use ```console for shell
@@ -47,3 +49,77 @@ def test_pickle_documentation_warns_about_untrusted_data(name: str) -> None:
     text = (ROOT / name).read_text(encoding="utf-8").lower()
     assert "unpickle" in text
     assert "trust" in text
+
+
+def mermaid_problems(block: str) -> list[str]:
+    """Cheap structural checks on a Mermaid block (rendering itself needs a browser)."""
+    problems = []
+    lines = [line.strip() for line in block.splitlines() if line.strip()]
+    first = next((line for line in lines if not line.startswith("%%")), "")  # skip init directives
+    if not first.startswith(("flowchart", "graph", "sequenceDiagram", "xychart-beta")):
+        problems.append(f"unknown diagram type {first!r}")
+    if block.count('"') % 2:
+        problems.append("unbalanced double quotes")
+    unquoted = re.sub(r'"[^"]*"', '""', block)  # labels may hold brackets, e.g. [0,1)
+    for opening, closing in ("[]", "{}", "()"):
+        if unquoted.count(opening) != unquoted.count(closing):
+            problems.append(f"unbalanced {opening}{closing}")
+    return problems
+
+
+def test_mermaid_guard_flags_broken_diagrams() -> None:
+    assert mermaid_problems('flowchart TD\n  A["ok"] --> B{"fine"}\n') == []
+    assert mermaid_problems('flowchart TD\n  A["a [0,1) interval"] --> B\n') == []
+    assert mermaid_problems('%%{init: {"a": 1}}%%\nxychart-beta\n  line [1, 2]\n') == []
+    assert mermaid_problems("pie title nope\n") == ["unknown diagram type 'pie title nope'"]
+    assert "unbalanced double quotes" in mermaid_problems('flowchart TD\n  A["oops --> B\n')
+    assert "unbalanced []" in mermaid_problems("flowchart TD\n  A[oops --> B\n")
+    assert "unbalanced {}" in mermaid_problems("flowchart TD\n  A{oops --> B\n")
+
+
+@pytest.mark.parametrize(
+    ("name", "at_least"),
+    [
+        ("README.md", 1),
+        ("docs/algorithm.md", 9),
+        ("docs/superpowers/specs/2026-10-13-heavykeeper-topk-design.md", 1),
+    ],
+)
+def test_mermaid_diagrams_are_well_formed(name: str, at_least: int) -> None:
+    text = (ROOT / name).read_text(encoding="utf-8")
+    blocks = re.findall(r"```mermaid\n(.*?)```", text, flags=re.DOTALL)
+    assert len(blocks) >= at_least, f"{name} should draw at least {at_least} diagram(s)"
+    for block in blocks:
+        assert mermaid_problems(block) == [], block
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "README.md",
+        "docs/README.md",
+        "docs/algorithm.md",
+        "docs/examples.md",
+        "docs/superpowers/specs/2026-10-13-heavykeeper-topk-design.md",
+    ],
+)
+def test_diagrams_are_mermaid_not_text(name: str) -> None:
+    # Diagrams are written in Mermaid, which GitHub renders; box-drawing art in a plain code block
+    # is hard to keep aligned and to edit.
+    text = (ROOT / name).read_text(encoding="utf-8")
+    assert "```text" not in text
+    drawing = [c for c in text if c in "┌┐└┘├┤┬┴┼│─╭╮╰╯▼▲►◄"]
+    assert not drawing, f"{name} contains box-drawing characters: {''.join(sorted(set(drawing)))}"
+
+
+def test_decay_chart_matches_the_library() -> None:
+    # The chart's data points are typed into the Mermaid block, so check them against the code.
+    text = (ROOT / "docs/algorithm.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```mermaid\n(.*?)```", text, flags=re.DOTALL)
+    chart = next(block for block in blocks if "xychart-beta" in block)
+    base = float(re.search(r"b = ([0-9.]+)", chart).group(1))  # type: ignore[union-attr]
+    counters = re.search(r"x-axis .*?\[([^\]]*)\]", chart).group(1)  # type: ignore[union-attr]
+    values = re.search(r"line \[([^\]]*)\]", chart).group(1)  # type: ignore[union-attr]
+    sketch = PySketch(1, 1, base, 32, 1)
+    expected = [round(sketch.decay_probability(int(c)), 4) for c in counters.split(",")]
+    assert [float(v) for v in values.split(",")] == expected

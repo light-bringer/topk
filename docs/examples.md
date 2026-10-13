@@ -11,7 +11,8 @@ $ python examples/custom_key_encoder.py
 $ python examples/checkpointing.py
 ```
 
-(From a source checkout, run `pip install -e .` first so that `import topk` works.)
+(From a source checkout, run `pip install -e .` first so that `import topk` works.) To see why the
+library behaves as it does, read [How HeavyKeeper works](algorithm.md).
 
 ## 1. Count words: `word_frequency.py`
 
@@ -42,7 +43,8 @@ sentence of *A Tale of Two Cities*:
 
 A few clients make most of the requests while a long tail shows up once or twice, which is the
 case HeavyKeeper is built for. The script simulates 200,000 requests from about 27,000 distinct
-clients and keeps the ten busiest with a 24.6 KB sketch:
+clients and keeps the ten busiest with a 24.6 KB sketch (the small, fixed-size table of counters
+that the algorithm guide describes):
 
 ```pycon
 >>> requests = ["10.0.0.1"] * 5 + ["10.0.0.2"] * 3 + ["10.0.0.3"]  # the script streams 200,000
