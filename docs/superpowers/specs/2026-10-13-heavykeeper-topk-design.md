@@ -44,7 +44,7 @@ TopK(k, *, width=None, depth=2, decay_base=1.08, fingerprint_bits=32,
   pickle support via __getstate__/__setstate__ (seed and RNG state included)
 ```
 - `decay_base` is the paper's `b` (must be > 1). This deliberately differs from the `decay = 1/b` used by Redis and the `heavykeeper` package, and the docs say so.
-- `width=None` defaults to `max(1024, 32*k)`. Phase 4 benchmarks will check this value.
+- `width=None` defaults to `max(1024, 32*k)`. Measured in Phase 4 on a 500k-item Zipf stream (s = 1.1, k = 100): precision 1.000 and ARE <= 0.0008 on every seed, so the default stands.
 - `seed=None` draws a random seed (makes hash collisions hard to force on purpose). The seed is stored in the object's state; passing an integer makes runs reproducible.
 - Keys must be hashable: the top-k heap looks them up in a dict (`key in heap`). The default `encode_key` handles `str`, `bytes`, `int` (with `bool` encoded as `int`, because `True == 1`), `None`, and tuples of these (recursive, with type tags and length prefixes; the wire format is documented in `_encoding.py` and pinned by golden-vector tests). `bytearray` is not supported because it is unhashable. Subclasses of these types (`bool`, `IntEnum`, `namedtuple`, ...) are accepted only while they inherit `__eq__` and `__hash__` from the builtin unchanged; one that redefines equality could make distinct heap keys share an encoding, so it raises `TypeError` and needs a `key_encoder`. Any other type raises `TypeError` that names `key_encoder=`; a custom `key_encoder` extends which *hashable* types can be counted, it cannot make an unhashable key trackable. A custom encoder must be picklable for pickling to work.
 - Not thread-safe. The docs will say so.
@@ -56,7 +56,7 @@ TopK(k, *, width=None, depth=2, decay_base=1.08, fingerprint_bits=32,
 - Row index: `idx_j = (h1 + j*h2) % width`, and the flat bucket index is `j*width + idx_j`
 - Seed: `0 <= seed < 2**64`, used as the 8-byte big-endian BLAKE2b key and to seed the decay RNG. A pre-keyed hasher is copied per call to skip re-absorbing the key block.
 
-**Buckets:** two flat Python lists, `fps` and `counts`, each of length `depth*width`; row `j` starts at offset `j*width`.
+**Buckets:** two flat `array.array` objects, `fps` (`'I'`, 32-bit) and `counts` (`'Q'`, 64-bit), each of length `depth*width`; row `j` starts at offset `j*width`. Measured against lists: the same insertion speed (312k vs 313k inserts/s on CPython 3.13) and 3.7x less memory, because a list holds every 32-bit fingerprint as a separate ~28-byte int object.
 
 **Decay table:** `table[c] = b**-c`, computed until it drops below 2⁻⁵³ (about c ≈ 477 for b = 1.08). Beyond that the decay probability is treated as 0. Randomness comes from `random.Random(seed)`.
 
@@ -130,11 +130,11 @@ Two private class attributes, `_selective_increment` (Opt II) and `_exact_admiss
 - **Regression test: a new heavy key must be able to enter a full heap.** This catches the `<` vs `<=` typo.
 
 **Phase 4: Accuracy and throughput harness (`benchmarks/`)**
-- `zipf.py`: seeded Zipf stream generator.
-- `accuracy.py`: reports precision, ARE and AAE (paper §5.2) against an exact `Counter`. Compares this library, the "basic" subclass, and the `heavykeeper` package if it is installed.
-- `throughput.py`: inserts per second.
-- `tests/test_accuracy.py` (marked `slow`): Zipf with s = 1.1, N = 500k, k = 100, default width. Must reach precision ≥ 0.95 and beat the basic variant's ARE. If it misses, tune the default width here.
-- Record measured throughput in the README. There is no hard speed requirement for pure Python.
+- `common.py`: the seeded Zipf generator, the paper's metrics (precision is tie-aware: a reported key is correct if its true count is at least the k-th largest) and `BasicTopK`.
+- `accuracy.py` (`python -m benchmarks.accuracy`): reports precision, ARE and AAE (paper §5.2) against an exact `Counter` for the full and basic variants, and for the PyPI `heavykeeper` package with `--with-heavykeeper`.
+- `throughput.py` (`python -m benchmarks.throughput`): median inserts per second.
+- `tests/test_accuracy.py` (marked `slow`, run with `pytest -m slow`): Zipf with s = 1.1, N = 500k, k = 100. Default configuration: precision >= 0.98, ARE < 0.005, and no reported count above its true count. The "beats the basic variant" gate runs with **8-bit fingerprints**, because with the default 32-bit fingerprints the two variants are identical (Optimizations I and II only act on fingerprint collisions): there the full algorithm keeps precision >= 0.95 and ARE < 0.05 while the basic variant falls to precision <= 0.9 and an ARE more than 1000x larger (measured 74,000x to 170,000x).
+- Record measured throughput in the README. There is no hard speed requirement for pure Python; measured about 0.3M inserts/s on CPython 3.13, against about 6M for the Rust-backed `heavykeeper` package.
 
 **Phase 5: Docs and release**
 - README: install, quickstart, how to pick parameters (memory vs. precision, using the Theorem 3 bound), the list of differences from the paper, a BibTeX citation of the paper, and a comparison with the `heavykeeper` and Redis implementations.
@@ -151,7 +151,7 @@ Two private class attributes, `_selective_increment` (Opt II) and `_exact_admiss
 ## Verification
 - `pytest` passes (unit and property tests); `pytest -m slow` passes the accuracy gates.
 - `ruff check . && ruff format --check . && mypy` are clean (mypy runs in strict mode via `pyproject.toml`).
-- `python benchmarks/accuracy.py` prints a precision/ARE/AAE table in which the full algorithm beats the basic variant.
+- `python -m benchmarks.accuracy --fingerprint-bits 8 32` prints a precision/ARE/AAE table in which the full algorithm beats the basic variant at 8 bits and matches it at 32.
 - `python -m build` produces a `py3-none-any` wheel and an sdist; `twine check dist/*` passes.
 - Smoke test: install the wheel into a fresh venv on CPython and PyPy, then `python -c "from topk import TopK; t=TopK(3, seed=1); t.update('aaabbc'); print(t.most_common())"`.
 - After the TestPyPI upload, `pip install -i https://test.pypi.org/simple/ heavykeeper-topk` works in a clean venv.
