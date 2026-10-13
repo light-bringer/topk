@@ -23,6 +23,8 @@ Subclasses of ``str``, ``int``, ``bytes`` and ``tuple`` (``bool``, ``IntEnum``, 
 subclass that redefines equality can make distinct dict keys encode alike (or equal ones encode
 differently), silently merging or splitting their counts, so it must go through a custom
 ``key_encoder``.
+The encoding is computed with the builtins' own methods (``str.encode(key)``, ``int.to_bytes(n)``,
+...), so a subclass cannot change it by overriding them.
 
 Pickled sketches depend on this format, so changing it is a breaking change.
 """
@@ -48,7 +50,7 @@ def encode_key(key: object) -> bytes:
     """
     if isinstance(key, str):
         _require_base_equality(key, str)
-        data = key.encode("utf-8", "surrogatepass")
+        data = str.encode(key, "utf-8", "surrogatepass")
         return b"S" + _u64(len(data)) + data
     # bool is an int subclass and True == 1, so it encodes as the int it equals.
     if isinstance(key, int):
@@ -56,7 +58,7 @@ def encode_key(key: object) -> bytes:
         return _encode_int(key)
     if isinstance(key, bytes):
         _require_base_equality(key, bytes)
-        return b"B" + _u64(len(key)) + key
+        return b"B" + _u64(bytes.__len__(key)) + key
     if isinstance(key, tuple):
         _require_base_equality(key, tuple)
         return _encode_tuple(key)
@@ -83,9 +85,10 @@ def _keeps_base_equality(t: type, base: type) -> bool:
 
 
 def _encode_int(n: int) -> bytes:
-    data = n.to_bytes((n.bit_length() + 8) // 8, "big", signed=True)
+    data = int.to_bytes(n, (int.bit_length(n) + 8) // 8, "big", signed=True)
     return b"I" + _u64(len(data)) + data
 
 
 def _encode_tuple(items: tuple[object, ...]) -> bytes:
-    return b"T" + _u64(len(items)) + b"".join(map(encode_key, items))
+    count = tuple.__len__(items)
+    return b"T" + _u64(count) + b"".join(map(encode_key, tuple.__iter__(items)))

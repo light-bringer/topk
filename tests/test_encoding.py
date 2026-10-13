@@ -176,3 +176,50 @@ def test_subclasses_that_override_equality_are_rejected(key: object) -> None:
     with pytest.raises(TypeError, match="__eq__") as excinfo:
         encode_key(key)
     assert "key_encoder" in str(excinfo.value)
+
+
+class _LyingStr(str):
+    """Keeps str equality and hashing but lies through its other methods."""
+
+    def encode(self, *args: object, **kwargs: object) -> bytes:  # type: ignore[override]
+        return b"lie"
+
+
+class _LyingInt(int):
+    def bit_length(self) -> int:
+        return 0
+
+    def to_bytes(self, *args: object, **kwargs: object) -> bytes:  # type: ignore[override]
+        return b"\x00"
+
+
+class _LyingBytes(bytes):
+    def __len__(self) -> int:
+        return 0
+
+
+class _LyingTuple(tuple):  # type: ignore[type-arg]
+    def __len__(self) -> int:
+        return 0
+
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        return iter(())
+
+
+@pytest.mark.parametrize(
+    ("subclass_instance", "plain_equal"),
+    [
+        (_LyingStr("abc"), "abc"),
+        (_LyingInt(300), 300),
+        (_LyingInt(-5), -5),
+        (_LyingBytes(b"xyz"), b"xyz"),
+        (_LyingTuple((1, "a")), (1, "a")),
+        ((_LyingStr("k"), _LyingInt(7)), ("k", 7)),  # also when nested
+    ],
+)
+def test_subclass_method_overrides_cannot_change_the_encoding(
+    subclass_instance: object, plain_equal: object
+) -> None:
+    # Equal keys must encode alike, so the encoding may only depend on the builtin value.
+    assert subclass_instance == plain_equal
+    assert encode_key(subclass_instance) == encode_key(plain_equal)
