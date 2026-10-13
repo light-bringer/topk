@@ -76,9 +76,14 @@ The README says "not on PyPI yet" until the first release. Update that note when
 
 ## If something goes wrong
 
-- **The tag check fails.** The tag and `pyproject.toml` disagree. Fix `pyproject.toml`, or delete
-  the tag (`git push --delete origin v0.1.0`, then `git tag -d v0.1.0`) and tag again.
-- **A smoke test fails.** Nothing was published. Fix the problem, merge, and tag a fresh commit.
+- **The tag check fails.** Either the tag and `pyproject.toml` disagree, or the version in
+  `pyproject.toml` is a development version such as `0.1.0.dev0`, which is never released. Fix
+  `pyproject.toml` in a commit, then delete the tag (`git push --delete origin v0.1.0`, then
+  `git tag -d v0.1.0`) and tag the fixed commit.
+- **A smoke test fails.** Nothing was published. Fix the problem and merge it. The tag still points
+  at the commit that failed, so move it: delete it (`git push --delete origin v0.1.0`, then
+  `git tag -d v0.1.0`) and tag the fixed commit with the same version. Or bump the version and use a
+  new tag. Either is safe, because nothing reached PyPI.
 - **PyPI rejects the upload with a trusted-publisher error.** One of the values in the table above
   does not match the workflow file name, the repository, or the environment. Compare them.
 - **A bad version was published.** PyPI never lets you replace a version. *Yank* it from the project
