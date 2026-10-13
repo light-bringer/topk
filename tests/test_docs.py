@@ -78,6 +78,7 @@ def test_mermaid_guard_flags_broken_diagrams() -> None:
 @pytest.mark.parametrize(
     ("name", "at_least"),
     [
+        ("README.md", 1),
         ("docs/algorithm.md", 9),
     ],
 )

@@ -47,8 +47,22 @@ decreased by one, but only with a probability that shrinks as the counter grows.
 counter is quickly worn away by other items, while a frequent item's counter is almost never worn
 away. A small separate list remembers which `k` items currently have the biggest counters.
 
+```mermaid
+flowchart TD
+    A(["an item arrives"]) --> B["hash it: one counter in each row,<br/>plus a short fingerprint of the item"]
+    B --> C{"THE COUNTERS<br/>a small table of fixed size"}
+    C -- "counter has the same fingerprint" --> C1["add one"]
+    C -- "counter has a different fingerprint" --> C2["maybe subtract one<br/>(less likely the bigger it is)"]
+    C -- "counter is empty" --> C3["claim it"]
+    C1 --> D["the item's count so far"]
+    C2 --> D
+    C3 --> D
+    D --> E["THE TOP-K LIST<br/>keeps the k items with the biggest counts"]
+    E --> F(["most_common() returns<br/>[(item, count), ...]"])
+```
+
 That is the whole idea; [docs/algorithm.md](docs/algorithm.md) explains it step by step with
-diagrams. It gives you:
+more diagrams. It gives you:
 
 - **Fixed memory:** about `12 * depth * width` bytes (24.6 KB with the default settings) plus
   roughly 84 bytes per tracked item.
