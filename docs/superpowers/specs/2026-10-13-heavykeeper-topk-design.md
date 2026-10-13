@@ -113,9 +113,11 @@ speed (312k against 313k per second) and 3.7 times less memory, because a list s
 fingerprint as a separate 28-byte object. A bucket costs 12 bytes (4 for the fingerprint, 8 for the
 counter).
 
-**The default fingerprint is 32 bits** (the paper used 16). Two keys then essentially never collide.
-The optimizations are identical to the basic algorithm at 32 bits and decisive at 8 bits, so the
-accuracy tests that distinguish them run with 8-bit fingerprints.
+**The default fingerprint is 32 bits** (the paper used 16). Two keys that share a bucket then match
+on fingerprint about once in four billion times, against once in 256 with 8 bits. (Some pair of keys
+in a large stream will share a fingerprint, but that only matters if the pair also shares a bucket.)
+The optimizations gave results identical to the basic algorithm at 32 bits in the tests and are
+decisive at 8 bits, so the accuracy tests that distinguish them run with 8-bit fingerprints.
 
 **The default `width` is `max(1024, 32 * k)`.** Measured on a 500,000-item Zipf stream with `k =
 100`: precision 1.000 and average relative error below 0.0008 on every seed, so no tuning was

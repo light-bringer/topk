@@ -301,9 +301,13 @@ appears. The authors' code, and this library, use `C <= n_min`.
 
 ## 8. Fingerprint collisions, and why the two optimizations exist
 
-Two different keys can share a fingerprint, and then the sketch cannot tell them apart. With 32-bit
-fingerprints (the default) that is vanishingly rare; with 8-bit fingerprints it is common, which is
-where the optimizations earn their keep:
+Two different keys that land in the same bucket *and* have the same fingerprint look identical to
+that bucket, and the sketch cannot tell them apart. Given two keys in one bucket, the chance that
+their fingerprints match is 1 in 2^bits: about one in four billion with the default 32-bit
+fingerprints, one in 256 with 8-bit ones. (Across a whole stream some pair of keys will share a
+fingerprint somewhere: with 100,000 distinct keys it is more likely than not. That matters only if
+the pair also shares a bucket.) With short fingerprints the problem is common, which is where the
+optimizations earn their keep:
 
 ```mermaid
 flowchart TD

@@ -70,12 +70,13 @@ more diagrams. It gives you:
   settings found the true top 100 every time, and the reported counts were off by less than 0.1% on
   average (see [How accurate is it?](#how-accurate-is-it)).
 - **Counts that are not inflated:** a reported count is never higher than the true count, except
-  in the rare case where two different items get the same fingerprint (see the next point).
+  in the rare case where two different items share a counter *and* have the same fingerprint (see
+  the next point).
 - **Protection against look-alike items:** two refinements from the paper make it much harder for a
-  rare item to borrow a frequent item's count when the two happen to share a fingerprint. They do
-  not rule it out entirely. With the default 32-bit fingerprints sharing almost never happens; with
-  short fingerprints it is common, and the refinements are what keep the results usable (see the
-  benchmarks below).
+  rare item to borrow a frequent item's count when the two share a counter and a fingerprint. They
+  do not rule it out entirely. Given two items in the same counter, their 32-bit fingerprints match
+  about once in four billion times; with 8-bit fingerprints, once in 256. With short fingerprints
+  the refinements are what keep the results usable (see the benchmarks below).
 
 ## Usage
 
@@ -224,10 +225,10 @@ machine:
 | 8-bit fingerprints, `width = 8k`: this library | 0.99 to 1.00 | about 0.005 | about 3 |
 | 8-bit fingerprints, `width = 8k`: without the two refinements | 0.75 to 0.82 | 385 to 800 | hundreds |
 
-With 32-bit fingerprints two different keys almost never share one, so the two refinements never
-come into play and the variants give identical results. With 8-bit fingerprints sharing is common,
-and the refinements are the difference between a usable result and a useless one. That is why they
-are included.
+With 32-bit fingerprints, two keys that share a counter almost never also share a fingerprint, so
+in these tests the two refinements never came into play and both variants gave identical results.
+With 8-bit fingerprints it happens often, and the refinements are the difference between a usable
+result and a useless one. That is why they are included.
 
 **Speed.** About 0.3 million inserts per second on CPython 3.13. The Rust-backed
 [`heavykeeper`](https://pypi.org/project/heavykeeper/) package is roughly 20 times faster at similar
