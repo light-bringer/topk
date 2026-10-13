@@ -23,14 +23,14 @@ def run_markdown_doctests(name: str) -> doctest.TestResults:
     return runner.summarize()
 
 
-@pytest.mark.parametrize("name", ["README.md", "docs/examples.md"])
+@pytest.mark.parametrize("name", ["README.md", "docs/examples.md", "docs/algorithm.md"])
 def test_documentation_examples_run(name: str) -> None:
     results = run_markdown_doctests(name)
     assert results.attempted > 0, f"{name} has no pycon examples"
     assert results.failed == 0
 
 
-@pytest.mark.parametrize("name", ["README.md", "docs/examples.md"])
+@pytest.mark.parametrize("name", ["README.md", "docs/examples.md", "docs/algorithm.md"])
 def test_documentation_has_no_code_block_that_is_never_run(name: str) -> None:
     # A plain ```python fence is displayed but never executed, so it can drift from the library.
     # Write runnable examples as ```pycon (run by the test above); use ```console for shell
@@ -47,3 +47,36 @@ def test_pickle_documentation_warns_about_untrusted_data(name: str) -> None:
     text = (ROOT / name).read_text(encoding="utf-8").lower()
     assert "unpickle" in text
     assert "trust" in text
+
+
+def mermaid_problems(block: str) -> list[str]:
+    """Cheap structural checks on a Mermaid block (rendering itself needs a browser)."""
+    problems = []
+    first = next((line.strip() for line in block.splitlines() if line.strip()), "")
+    if not first.startswith(("flowchart", "graph", "sequenceDiagram")):
+        problems.append(f"unknown diagram type {first!r}")
+    if block.count('"') % 2:
+        problems.append("unbalanced double quotes")
+    unquoted = re.sub(r'"[^"]*"', '""', block)  # labels may hold brackets, e.g. [0,1)
+    for opening, closing in ("[]", "{}", "()"):
+        if unquoted.count(opening) != unquoted.count(closing):
+            problems.append(f"unbalanced {opening}{closing}")
+    return problems
+
+
+def test_mermaid_guard_flags_broken_diagrams() -> None:
+    assert mermaid_problems('flowchart TD\n  A["ok"] --> B{"fine"}\n') == []
+    assert mermaid_problems('flowchart TD\n  A["a [0,1) interval"] --> B\n') == []
+    assert mermaid_problems("pie title nope\n") == ["unknown diagram type 'pie title nope'"]
+    assert "unbalanced double quotes" in mermaid_problems('flowchart TD\n  A["oops --> B\n')
+    assert "unbalanced []" in mermaid_problems("flowchart TD\n  A[oops --> B\n")
+    assert "unbalanced {}" in mermaid_problems("flowchart TD\n  A{oops --> B\n")
+
+
+@pytest.mark.parametrize("name", ["docs/algorithm.md"])
+def test_mermaid_diagrams_are_well_formed(name: str) -> None:
+    text = (ROOT / name).read_text(encoding="utf-8")
+    blocks = re.findall(r"```mermaid\n(.*?)```", text, flags=re.DOTALL)
+    assert len(blocks) >= 2, "the algorithm guide draws the insert rule and the admission rule"
+    for block in blocks:
+        assert mermaid_problems(block) == [], block
