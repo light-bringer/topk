@@ -1,7 +1,9 @@
 """The HeavyKeeper bucket arrays: hashing, exponential-weakening decay and the insert rule.
 
-The sketch is ``depth`` arrays of ``width`` buckets, stored as two flat lists (``fps`` for
-fingerprints, ``counts`` for counters) where row ``j`` starts at offset ``j * width``. It knows
+The sketch is ``depth`` arrays of ``width`` buckets, stored as two flat ``array.array`` objects
+(``fps`` for 32-bit fingerprints, ``counts`` for 64-bit counters) where row ``j`` starts at offset
+``j * width``. Compact arrays matter: a list would hold every fingerprint as a separate ~28-byte
+int object, about four times the memory, at the same insertion speed. It knows
 nothing about the top-k set: the caller says whether the flow is already monitored and what the
 smallest monitored count ``n_min`` is, and gets back the flow's estimate for this insertion.
 
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import math
 import random
+from array import array
 from collections.abc import Callable, Sequence
 from hashlib import blake2b
 from typing import Any
@@ -34,6 +37,9 @@ _U32 = (1 << 32) - 1
 _NEGLIGIBLE = 2.0**-53
 # Precompute b**-c for c below this; larger counts (only for b very close to 1) use pow().
 _TABLE_LIMIT = 4096
+
+if array("I").itemsize < 4:  # pragma: no cover - no mainstream platform
+    raise ImportError("topk needs a 32-bit unsigned int array type code")
 
 
 def _decay_cutoff(b: float) -> int:
@@ -109,8 +115,8 @@ class PySketch:
         self.decay_base = decay_base
         self.fingerprint_bits = fingerprint_bits
         self.seed = seed
-        self.fps: list[int] = [0] * (width * depth)
-        self.counts: list[int] = [0] * (width * depth)
+        self.fps: array[int] = array("I", [0]) * (width * depth)
+        self.counts: array[int] = array("Q", [0]) * (width * depth)
 
         self._fp_mask = (1 << fingerprint_bits) - 1
         self._offsets = tuple(j * width for j in range(depth))
@@ -225,5 +231,5 @@ class PySketch:
         rng = random.Random()
         rng.setstate(rng_state)
         self._configure(width, depth, decay_base, fingerprint_bits, seed, rng)
-        self.fps = list(fps)
-        self.counts = list(counts)
+        self.fps = array("I", fps)
+        self.counts = array("Q", counts)
