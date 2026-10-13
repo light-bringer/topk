@@ -160,7 +160,8 @@ name `topk` cannot be registered: PyPI treats names that differ only by `.`, `_`
   it timed behaved correctly. CI keeps the results as an artifact but does not fail on speed, since
   shared runners are too noisy for a threshold.
 - **Documentation tests:** every `>>>` example in the README, the algorithm guide and the examples
-  guide is run, the example scripts are run, and the Mermaid diagrams are checked for structure.
+  guide is run, the example scripts are run, the Mermaid diagrams are checked for structure, and the
+  decay chart's data is checked against the library.
 - During development, the important behaviors were also checked by breaking the code on purpose
   (for example reintroducing the paper's strict comparison) and confirming a test fails. That was
   done by hand; it is not automated.

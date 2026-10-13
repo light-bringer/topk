@@ -16,7 +16,7 @@ All notable changes to this project are documented here. The format follows
 - Compact bucket storage (`array`): 12 bytes per bucket.
 - Documentation: a README written for readers new to the algorithm, a guide to how HeavyKeeper works
   with Mermaid diagrams (`docs/algorithm.md`), an examples guide (`docs/examples.md`), four runnable
-  scripts in `examples/`, and design notes. Every code example is run by the test suite.
+  scripts in `examples/`, and design notes. Every `>>>` example is run by the test suite.
 - Benchmarks: `python -m benchmarks.accuracy` and `python -m benchmarks.throughput`, slow accuracy
   gates (`pytest -m slow`) and `pytest-benchmark` microbenchmarks (`pytest -m bench`).
 - CI on CPython 3.10 to 3.14 (Linux, macOS, Windows) and PyPy 3.11, with lint, strict mypy, the

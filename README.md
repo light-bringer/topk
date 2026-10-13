@@ -71,10 +71,11 @@ more diagrams. It gives you:
   average (see [How accurate is it?](#how-accurate-is-it)).
 - **Counts that are not inflated:** a reported count is never higher than the true count, except
   in the rare case where two different items get the same fingerprint (see the next point).
-- **Protection against look-alike items:** two refinements from the paper stop a rare item from
-  borrowing a frequent item's count when the two happen to share a fingerprint. With the default
-  32-bit fingerprints this almost never happens; with short fingerprints it is common, and the
-  refinements are what keep the results usable (see the benchmarks below).
+- **Protection against look-alike items:** two refinements from the paper make it much harder for a
+  rare item to borrow a frequent item's count when the two happen to share a fingerprint. They do
+  not rule it out entirely. With the default 32-bit fingerprints sharing almost never happens; with
+  short fingerprints it is common, and the refinements are what keep the results usable (see the
+  benchmarks below).
 
 ## Usage
 

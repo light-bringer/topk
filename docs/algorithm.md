@@ -1,9 +1,10 @@
 # How HeavyKeeper works
 
-This page explains the algorithm with diagrams, in the order the data flows. Every number in a
-diagram is reproduced by a `>>>` example on this page, which the test suite runs, so the pictures
-cannot drift from the code. The examples reach into private classes (`topk._sketch.PySketch`) to
-stage scenarios; that is for explanation only and is not public API.
+This page explains the algorithm with diagrams, in the order the data flows. The worked examples
+(sections 3, 5, 7 and 8) are replayed through the real code by the `>>>` examples on this page,
+which the test suite runs, and a test checks the decay chart's data against the library. The bucket
+grid in section 2 is only an illustration. The examples reach into private classes
+(`topk._sketch.PySketch`) to stage scenarios; that is for explanation only and is not public API.
 
 ## In plain words
 
@@ -61,8 +62,8 @@ flowchart LR
     H2 --> P
 ```
 
-A bucket is a (fingerprint, counter) pair, 4 + 8 = 12 bytes. Here a key with fingerprint
-`F1` lands on the highlighted bucket of each row:
+A bucket is a (fingerprint, counter) pair, 4 + 8 = 12 bytes. This picture is an illustration (the
+values are made up): a key with fingerprint `F1` lands on the highlighted bucket of each row:
 
 ```mermaid
 flowchart TB
@@ -228,11 +229,13 @@ The same walk through the kernel, with the draws scripted as 0.5 (above `0.199`,
 [21, 1, 8]
 >>> [fp == f3 for fp in sketch.fps]  # f3 now owns rows 1 and 2
 [False, True, True]
+>>> round(sketch.decay_probability(21), 3), round(sketch.decay_probability(1), 3)  # as in the diagram
+(0.199, 0.926)
 ```
 
 Each key is stored in `d` buckets, and the estimate is the largest of its counters. Using several
-rows protects against the unlucky case where one of a key's buckets is a poor home (for example it
-was taken over, as in row 1 here): another row still holds the true count.
+rows guards against the unlucky case where one of a key's buckets is a poor home (for example it
+was taken over, as in row 1 here): another row will usually still hold a good count.
 
 ## 6. The top-k set
 
@@ -256,8 +259,8 @@ flowchart TD
 smallest entry, so `maxv` below `n_min + 1` is rejected. But a genuine newcomer's counter climbs by
 one per arrival, and only while it is `≤ n_min` (Optimization II), so it can only ever arrive at
 exactly `n_min + 1`. A larger value cannot come from a genuine newcomer: it means the key landed on
-another key's bucket through a fingerprint collision (the paper's Theorem 1). Rejecting it keeps
-a mouse from borrowing an elephant's count.
+another key's bucket through a fingerprint collision (the paper's Theorem 1). Rejecting it makes
+it much harder for a mouse to borrow an elephant's count.
 
 ## 7. A newcomer climbs into a full set
 

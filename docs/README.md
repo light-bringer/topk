@@ -12,5 +12,6 @@ and how to choose its settings. The pages here go further:
   built, the decisions behind it, and what is left to do. Written for people who want to change the
   code.
 
-Every code example in these pages is run by the test suite, so what you read is what the library
-does.
+Every `>>>` example in these pages is run by the test suite, and so are the example scripts, so the
+code you read is code that works. (Blocks that show a program's output, marked `console`, are
+samples and are not checked.)
