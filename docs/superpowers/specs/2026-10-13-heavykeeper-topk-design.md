@@ -53,13 +53,16 @@ TopK(k, *, width=None, depth=2, decay_base=1.08, fingerprint_bits=32,
 **Hashing (in `_sketch.py`):**
 - `x = int.from_bytes(blake2b(data, digest_size=16, key=seed_bytes).digest(), "little")`
 - `h1 = x & (2**64-1)`, `h2 = ((x >> 64) & (2**32-1)) | 1`, `fp = (x >> 96) & fp_mask`
-- Row index: `idx_j = (h1 + j*h2) % width`
+- Row index: `idx_j = (h1 + j*h2) % width`, and the flat bucket index is `j*width + idx_j`
+- Seed: `0 <= seed < 2**64`, used as the 8-byte big-endian BLAKE2b key and to seed the decay RNG. A pre-keyed hasher is copied per call to skip re-absorbing the key block.
 
 **Buckets:** two flat Python lists, `fps` and `counts`, each of length `depth*width`; row `j` starts at offset `j*width`.
 
 **Decay table:** `table[c] = b**-c`, computed until it drops below 2⁻⁵³ (about c ≈ 477 for b = 1.08). Beyond that the decay probability is treated as 0. Randomness comes from `random.Random(seed)`.
 
-**Kernel insert:** `PySketch.insert(data, monitored, n_min) -> maxv`. For each row:
+**Kernel interface:** hashing is split from insertion so `add(key, count)` hashes once: `locate(data) -> (slots, fp)`, `insert(slots, fp, monitored, n_min) -> maxv` (one unit insertion) and `estimate(slots, fp) -> int`. The decay RNG is injectable so tests can script which bucket decays. A bucket whose counter is at or above the cutoff (`b**-c < 2**-53`) is never decayed and consumes no random draw.
+
+**Kernel insert**, for each of the flow's buckets:
 ```
 c = counts[i]
 if c == 0:            fps[i] = fp; counts[i] = 1; maxv = max(maxv, 1)                 # Case 1
@@ -75,7 +78,8 @@ elif c < len(table) and rand() < table[c]:                                      
 ```
 monitored = key in heap
 n_min = heap.min_count() if len(heap) == k else 0
-maxv = kernel.insert(data, monitored, n_min)
+slots, fp = kernel.locate(data)            # once per add(), however large count is
+maxv = kernel.insert(slots, fp, monitored, n_min)
 if monitored:            heap.increase(key, maxv)            # no-op unless maxv > current
 elif maxv > 0:
     if len(heap) < k:    heap.push(key, maxv)
@@ -85,7 +89,7 @@ Admission goes through a small overridable `_admit` method. The benchmarks subcl
 
 **IndexedMinHeap:** `push`, `min_count` (O(1)), `increase` (sift down, since counts only grow), `replace_min` (returns the evicted entry), `get`, `__contains__`, `items_desc()`.
 
-**Seam for a later compiled backend:** a future native kernel exposes the same private `insert(data, monitored, n_min)` / `estimate(data)` interface and is chosen at import time, falling back to the pure-Python kernel. Pickled state records a kernel/hash-scheme identifier, so mixing backends fails loudly. The plan is to ship the native code as a separate distribution behind an extra (`heavykeeper-topk[fast]`), so the main wheel stays `py3-none-any`.
+**Seam for a later compiled backend:** a future native kernel exposes the same private `locate` / `insert` / `estimate` interface and is chosen at import time, falling back to the pure-Python kernel. Pickled state records a kernel/hash-scheme identifier, so mixing backends fails loudly. The plan is to ship the native code as a separate distribution behind an extra (`heavykeeper-topk[fast]`), so the main wheel stays `py3-none-any`.
 
 ### Deliberate differences from the paper (all listed in the README)
 1. Opt II uses `<=` (fact 1 above).
