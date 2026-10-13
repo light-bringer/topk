@@ -44,11 +44,15 @@ A few clients make most of the requests while a long tail shows up once or twice
 case HeavyKeeper is built for. The script simulates 200,000 requests from about 27,000 distinct
 clients and keeps the ten busiest with a 24.6 KB sketch:
 
-```python
-top: TopK[str] = TopK(10, seed=1)
-top.update(requests)  # an iterator of client addresses
-for client, count in top.most_common():
-    print(client, count)
+```pycon
+>>> requests = ["10.0.0.1"] * 5 + ["10.0.0.2"] * 3 + ["10.0.0.3"]  # the script streams 200,000
+>>> top: TopK[str] = TopK(10, seed=1)
+>>> top.update(requests)  # any iterable of keys; the script passes an iterator
+>>> for client, count in top.most_common():
+...     print(client, count)
+10.0.0.1 5
+10.0.0.2 3
+10.0.0.3 1
 ```
 
 ```console

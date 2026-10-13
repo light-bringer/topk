@@ -28,3 +28,13 @@ def test_documentation_examples_run(name: str) -> None:
     results = run_markdown_doctests(name)
     assert results.attempted > 0, f"{name} has no pycon examples"
     assert results.failed == 0
+
+
+@pytest.mark.parametrize("name", ["README.md", "docs/examples.md"])
+def test_documentation_has_no_code_block_that_is_never_run(name: str) -> None:
+    # A plain ```python fence is displayed but never executed, so it can drift from the library.
+    # Write runnable examples as ```pycon (run by the test above); use ```console for shell
+    # sessions and ```bibtex for citations.
+    text = (ROOT / name).read_text(encoding="utf-8")
+    assert "```python" not in text
+
