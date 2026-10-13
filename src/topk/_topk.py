@@ -66,12 +66,15 @@ class TopK(Generic[K]):
         seed: int | None = None,
         key_encoder: Callable[[K], bytes] | None = None,
     ) -> None:
+        # operator.index rejects floats (and NaN): k = 1.5 would admit two keys before reporting
+        # itself full and k = nan would never be full, silently breaking the memory bound.
+        k = operator.index(k)
         if k < 1:
             raise ValueError(f"k must be >= 1, got {k}")
-        if width is None:
-            width = max(1024, 32 * k)
-        if seed is None:
-            seed = secrets.randbits(64)
+        width = max(1024, 32 * k) if width is None else operator.index(width)
+        depth = operator.index(depth)
+        fingerprint_bits = operator.index(fingerprint_bits)
+        seed = secrets.randbits(64) if seed is None else operator.index(seed)
         self._k = k
         self._sketch = PySketch(width, depth, decay_base, fingerprint_bits, seed)
         self._heap: IndexedMinHeap[K] = IndexedMinHeap()

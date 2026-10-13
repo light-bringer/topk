@@ -312,3 +312,33 @@ def test_without_the_optimizations_the_colliding_key_is_admitted_and_inflates_th
     tk = collision_scenario(Basic)
     tk.add("a")
     assert ("a", 51) in tk.most_common()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"k": 1.5},
+        {"k": 2.0},
+        {"k": float("nan")},
+        {"k": "3"},
+        {"k": 3, "width": 2.5},
+        {"k": 3, "width": float("nan")},
+        {"k": 3, "depth": 1.5},
+        {"k": 3, "fingerprint_bits": 8.0},
+        {"k": 3, "seed": 1.5},
+    ],
+)
+def test_integer_arguments_must_be_integers(kwargs: dict[str, object]) -> None:
+    # TopK(1.5) would admit two keys before reporting itself full, and TopK(nan) would never be
+    # full, so the memory bound would silently fail.
+    with pytest.raises(TypeError, match="integer"):
+        TopK(**kwargs)  # type: ignore[arg-type]
+
+
+def test_integer_like_arguments_are_accepted() -> None:
+    class Index:
+        def __index__(self) -> int:
+            return 3
+
+    tk: TopK[str] = TopK(Index(), width=Index(), depth=Index(), seed=Index())  # type: ignore[arg-type]
+    assert (tk.k, tk.width, tk.depth, tk.seed) == (3, 3, 3, 3)
