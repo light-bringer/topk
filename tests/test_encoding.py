@@ -70,8 +70,9 @@ def test_tuple_nesting_is_not_flattened() -> None:
 
 
 # Hypothesis' default text() never generates surrogate code points, so cover them explicitly.
-# Note that "😀" in a source literal is merged by the parser into one emoji character;
-# separate surrogate code points must be built with chr().
+# A high surrogate followed by a low surrogate is not the one character U+1F600 that UTF-16 would
+# make of them, and the encoding must not fuse them. They are built with chr() so that the
+# source file holds no escape sequences or non-BMP characters that tooling could rewrite.
 _HIGH, _LOW, _EMOJI = chr(0xD83D), chr(0xDE00), "\U0001f600"
 _surrogate_text = st.text(st.sampled_from([_HIGH, _LOW, _EMOJI, "a"]), max_size=6)
 
