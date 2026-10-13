@@ -49,13 +49,39 @@ def test_a_tag_without_the_v_prefix_is_rejected() -> None:
     assert '"v"' in message
 
 
-def test_main_compares_the_tag_with_the_real_pyproject_version() -> None:
+@pytest.mark.parametrize(
+    "version",
+    ["0.1.0.dev0", "1.0.0.dev12", "2.0.0rc1.dev3", "1.0.0.post1.dev1", "0.1.0-dev1", "0.1.0_dev"],
+)
+def test_a_development_version_is_never_released_even_with_a_matching_tag(version: str) -> None:
+    message = load_script().check_tag(f"v{version}", version)
+    assert message
+    assert "development" in message
+
+
+@pytest.mark.parametrize("version", ["0.1.0", "1.0.0rc1", "1.0.0.post1", "1.0.0a1", "2.0.0b2"])
+def test_pre_releases_that_are_not_development_snapshots_are_released(version: str) -> None:
+    assert load_script().check_tag(f"v{version}", version) is None
+
+
+def test_main_compares_the_tag_with_the_pyproject_version(tmp_path: Path) -> None:
+    module = load_script()
+    module.PYPROJECT = tmp_path / "pyproject.toml"
+    module.PYPROJECT.write_text('[project]\nversion = "0.3.0"\n', encoding="utf-8")
+    assert module.main(["v0.3.0"]) == 0
+    assert module.main(["v999.0.0"]) == 1
+    assert module.main([]) == 2
+    module.PYPROJECT.write_text('[project]\nversion = "0.3.0.dev1"\n', encoding="utf-8")
+    assert module.main(["v0.3.0.dev1"]) == 1
+
+
+def test_main_reads_the_real_pyproject_file() -> None:
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     version = config["project"]["version"]
     module = load_script()
-    assert module.main([f"v{version}"]) == 0
-    assert module.main(["v999.0.0"]) == 1
-    assert module.main([]) == 2
+    assert module.PYPROJECT == ROOT / "pyproject.toml"
+    # Whatever the current version is, a tag that is not that version must be refused.
+    assert module.main([f"v{version}.nope"]) == 1
 
 
 # --- the workflow ------------------------------------------------------------------------------
