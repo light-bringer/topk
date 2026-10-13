@@ -134,7 +134,7 @@ Two private class attributes, `_selective_increment` (Opt II) and `_exact_admiss
 - `accuracy.py` (`python -m benchmarks.accuracy`): reports precision, ARE and AAE (paper §5.2) against an exact `Counter` for the full and basic variants, and for the PyPI `heavykeeper` package with `--with-heavykeeper`.
 - `throughput.py` (`python -m benchmarks.throughput`): median inserts per second.
 - `tests/test_accuracy.py` (marked `slow`, run with `pytest -m slow`): Zipf with s = 1.1, N = 500k, k = 100. Default configuration: precision >= 0.98, ARE < 0.005, and no reported count above its true count. The "beats the basic variant" gate runs with **8-bit fingerprints**, because with the default 32-bit fingerprints the two variants are identical (Optimizations I and II only act on fingerprint collisions): there the full algorithm keeps precision >= 0.95 and ARE < 0.05 while the basic variant falls to precision <= 0.9 and an ARE more than 1000x larger (measured 74,000x to 170,000x).
-- Record measured throughput in the README. There is no hard speed requirement for pure Python; measured about 0.3M inserts/s on CPython 3.13, against about 6M for the Rust-backed `heavykeeper` package.
+- Measured throughput (about 0.3M inserts/s on CPython 3.13, against about 6M for the Rust-backed `heavykeeper` package) and the accuracy table are recorded in the README as part of Phase 5, not in this phase. There is no hard speed requirement for pure Python.
 
 **Phase 5: Docs and release**
 - README: install, quickstart, how to pick parameters (memory vs. precision, using the Theorem 3 bound), the list of differences from the paper, a BibTeX citation of the paper, and a comparison with the `heavykeeper` and Redis implementations.
