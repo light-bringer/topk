@@ -54,7 +54,16 @@ dev = [
 packages = ["src/topk"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/topk", "tests", "benchmarks", "README.md", "LICENSE", "CHANGELOG.md"]
+include = [
+    "src/topk",
+    "tests",
+    "benchmarks",
+    "examples",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
