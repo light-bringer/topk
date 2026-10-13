@@ -41,6 +41,10 @@ These steps need your own PyPI accounts, so they cannot be done from the reposit
    $ /tmp/try/bin/python -c "from topk import TopK; t = TopK(2, seed=1); t.update('abracadabra'); print(t.most_common())"
    ```
 
+Pull requests that change the release files (the workflow, its helper script or `pyproject.toml`)
+run the same build and smoke tests automatically, so a broken release workflow shows up in review.
+The publish jobs cannot run from a pull request.
+
 A version can be uploaded only once, even to TestPyPI. For another dry run, change the version
 first (for example from `0.1.0.dev0` to `0.1.0.dev1`).
 

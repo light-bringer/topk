@@ -110,3 +110,19 @@ def test_the_build_checks_the_tag_against_the_version(workflow: str) -> None:
     assert "check_release_tag.py" in build
     assert "startsWith(github.ref, 'refs/tags/')" in build
     assert "twine check" in build
+
+
+def test_pull_requests_that_touch_the_release_build_and_test_it_but_never_publish(
+    workflow: str,
+) -> None:
+    # So a change to the release machinery is exercised before it can run for real.
+    assert re.search(r"pull_request:\n\s+paths:", workflow)
+    assert '".github/workflows/release.yml"' in workflow
+    assert '".github/scripts/**"' in workflow
+    for name in ("publish-testpypi", "publish-pypi"):
+        condition = re.search(r"^    if: (.*)$", job(workflow, name), re.M)
+        assert condition, f"{name} must be conditional"
+        assert "pull_request" not in condition.group(1)
+    # Each publish condition depends on a tag or a manual run, neither of which a PR can be.
+    assert "refs/tags/v" in job(workflow, "publish-pypi")
+    assert "workflow_dispatch" in job(workflow, "publish-testpypi")
