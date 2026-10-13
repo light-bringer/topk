@@ -15,6 +15,10 @@ B = 1.08
 class ScriptedRandom(random.Random):
     """A Random whose random() replays scripted values and fails on any unexpected draw."""
 
+    def __new__(cls, *values: float) -> "ScriptedRandom":
+        # Before Python 3.11, Random.__new__ rejects more than one positional argument.
+        return super().__new__(cls)
+
     def __init__(self, *values: float) -> None:
         super().__init__(0)
         self._script = list(values)
